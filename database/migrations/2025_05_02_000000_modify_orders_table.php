@@ -14,8 +14,8 @@ return new class extends Migration
         });
 
         Schema::table('orders', function (Blueprint $table) {
-            // Add the items column as text with a default empty array
-            $table->text('items')->default('[]');
+            // Add the items column as JSON without default value
+            $table->json('items');
         });
     }
 
@@ -26,7 +26,7 @@ return new class extends Migration
         });
 
         Schema::table('orders', function (Blueprint $table) {
-            $table->text('items');
+            $table->json('items');
         });
     }
 }; 
