@@ -43,9 +43,7 @@ class Drug extends Model
 
     public function orders()
     {
-        return $this->belongsToMany(Order::class, 'order_drug')
-                    ->withPivot('quantity', 'price')
-                    ->withTimestamps();
+        return $this->hasMany(Order::class);
     }
 
     public function creator()

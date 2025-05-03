@@ -10,34 +10,39 @@ class Order extends Model
 
     protected $fillable = [
         'user_id',
-        'items',
-        'total_amount',
-        'status',
-        'prescription_uid',
+        'drug_id',
+        'quantity',
         'prescription_image',
+        'total_amount',
+        'status'
     ];
 
-    public function setItemsAttribute($value)
-    {
-        if (is_array($value)) {
-            $this->attributes['items'] = json_encode($value);
-        } else {
-            $this->attributes['items'] = $value;
-        }
-    }
-
-    public function getItemsAttribute($value)
-    {
-        return json_decode($value, true);
-    }
+    protected $casts = [
+        'total_amount' => 'decimal:2',
+    ];
 
     public function user()
     {
-        return $this->belongsTo(User::class, 'user_id');
+        return $this->belongsTo(User::class);
     }
 
-    public function prescription()
+    public function drug()
     {
-        return $this->belongsTo(Prescription::class, 'prescription_uid', 'prescription_uid');
+        return $this->belongsTo(Drug::class);
+    }
+
+    public function getPrescriptionImageAttribute($value)
+    {
+        if (!$value) {
+            return null;
+        }
+        
+        // If the value is already a full URL, return it
+        if (filter_var($value, FILTER_VALIDATE_URL)) {
+            return $value;
+        }
+        
+        // Otherwise, construct the Cloudinary URL
+        return "https://res.cloudinary.com/" . config('cloudinary.cloud_name') . "/image/upload/" . $value;
     }
 }
