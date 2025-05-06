@@ -13,7 +13,7 @@
         "ignited/laravel-omnipay": "3.*",
         "khanamiryan/qrcode-detector-decoder": "^2.0",
         "laravel/framework": "^11.31",
-        "laravel/sanctum": "^4.0",
+        "laravel/sanctum": "^4.1",
         "laravel/scout": "^10.13",
         "laravel/socialite": "^5.19",
         "laravel/tinker": "^2.9",

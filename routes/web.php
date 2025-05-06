@@ -24,13 +24,6 @@ Route::get('/move',function(){
     
 });
 
-Route::get('/register', function () {
-    return view('register');
-})->name('register');
-
-Route::get('/login', function () {
-    return view('login');
-})->name('login');
 
 Route::get('/email/verify', function () {
     return view('email_verification');
@@ -39,9 +32,9 @@ Route::get('/email/verify', function () {
 Route::get('/email/verification-failed', function () {
     return view('auth.verification-failed');
 })->name('verification.failed');
-Route::get('/forgot-password', function () {
-    return view('forgot_password');
-})->name('password.request');
+// Route::get('/forgot-password', function () {
+//     return view('forgot_password');
+// })->name('password.request');
 
 Route::get('/email/verified', function () {
     return view('auth.verified');
@@ -51,7 +44,6 @@ Route::get('/password/reset/', function () {
 })->name('password.request');
 
 
-Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
 
 
@@ -75,11 +67,11 @@ Route::get('/pay/{orderId}', function ($orderId) {
 })->name('payment');
 
 // Admin Pharmacist Action Routes
-Route::get('/admin/pharmacists/{id}/action', [App\Http\Controllers\AdminController::class, 'handlePharmacistAction'])
+Route::get('/admin/pharmacists/{id}/action', [App\Http\Controllers\Api\AdminController::class, 'handlePharmacistAction'])
     ->name('admin.pharmacist.action')
     ->middleware(['auth', 'admin']);
 
 // Admin Dashboard Route
-Route::get('/admin/dashboard', [App\Http\Controllers\AdminController::class, 'dashboard'])
+Route::get('/admin/dashboard', [App\Http\Controllers\Api\AdminController::class, 'dashboard'])
     ->name('admin.dashboard')
     ->middleware(['auth', 'admin']);

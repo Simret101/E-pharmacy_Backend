@@ -23,6 +23,7 @@ use App\Http\Resources\PharmacistResource;
 use App\Http\Resources\PatientResource;
 use App\Services\AdminEmailService;
 use App\Customs\Services\CloudinaryService;
+use PHPOpenSourceSaver\JWTAuth\Facades\JWTAuth;
 
 class AuthController extends Controller
 {
@@ -37,20 +38,33 @@ class AuthController extends Controller
     {
         $data = $request->validated();
     
+        // Prevent admin registration
+        if ($request->input('is_role') === 0) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Admin registration is not allowed .'
+            ], 403);
+        }
+
+        // Ensure role is either 1 (patient) or 2 (pharmacist)
+        $data['is_role'] = $request->input('is_role', 1);
+        if (!in_array($data['is_role'], [1, 2])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid role specified. Only patients and pharmacists  can register.'
+            ], 422);
+        }
         
         if ($request->hasFile('license_image')) {
             $result = $this->cloudinaryService->uploadImage($request->file('license_image'), 'licenses');
             $data['license_image'] = $result['secure_url'];
         }
     
-    
         if ($request->hasFile('tin_image')) {
             $result = $this->cloudinaryService->uploadImage($request->file('tin_image'), 'tin_documents');
             $data['tin_image'] = $result['secure_url'];
         }
     
-        $data['is_role'] = $request->input('is_role', 1);
-        
         if ($request->filled('place_name') && $request->filled('lat') && $request->filled('lng')) {
             $data['place_name'] = $request->input('place_name');
             $data['address'] = $request->input('address');
@@ -70,8 +84,8 @@ class AuthController extends Controller
         
         return response()->json([
             'status' => 'success',
-            'message' => 'User registered successfully.Please verify your email',
-      
+            'message' => 'User registered successfully. Please verify your email.',
+            
         ], 201);
     }
     
@@ -80,48 +94,28 @@ class AuthController extends Controller
     public function login(LoginRequest $request)
     {
         $credentials = $request->validated();
-        
-        $user = User::where('email', $credentials['email'])->first();
-        
-        if (!$user || !Hash::check($credentials['password'], $user->password)) {
+
+        if (!$token = JWTAuth::attempt($credentials)) {
             return response()->json(['status' => 'failed', 'message' => 'Invalid credentials'], 401);
         }
-    
-        if ($user->is_role == 2) {
-            if ($user->status == 'pending') {
-                return response()->json(['status' => 'failed', 'message' => 'Your license is not verified yet. Please wait for approval.'], 403);
-            }
-    
-            if ($user->status == 'rejected') {
-                return response()->json(['status' => 'failed', 'message' => 'Your license has been declined. You are not allowed to log in.'], 403);
-            }
-        }
-    
-        if (!$user->email_verified_at) {
-            return response()->json(['status' => 'failed', 'message' => 'Please verify your email before logging in.'], 403);
-        }
-    
-        $token = $user->createToken('auth_token')->plainTextToken;
-    
+
+        $user = Auth::user();
+
+        // Generate a refresh token
         $refreshToken = Hash::make(now());
+
+        // Store the refresh token in the database
         DB::table('refresh_tokens')->updateOrInsert(
             ['user_id' => $user->id],
             ['token' => $refreshToken, 'expires_at' => now()->addDay()]
         );
-    
-        $expiresIn = Carbon::now()->addMinutes(60)->timestamp;
-    
-        $roleRedirects = [
-            '0' => 'admin/dashboard', 
-            '1' => 'patient/dashboard', 
-            '2' => 'pharmacist/dashboard' 
-        ];
-    
+
         return response()->json([
             'status' => 'success',
             'message' => 'Login successful',
             'data' => [
                 'user' => [
+                    'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
                     'status' => $user->status,
@@ -132,45 +126,94 @@ class AuthController extends Controller
                     'lng' => $user->lng,
                     'account_number' => $user->account_number,
                     'bank_name' => $user->bank_name,
-                 
                 ],
-                'token' => $token,
+                'access_token' => $token,
                 'refresh_token' => $refreshToken,
-                'expires_in' => $expiresIn,
-                'redirect_to' => $roleRedirects[$user->is_role] ?? 'dashboard'
+                'token_type' => 'bearer',
+                'expires_in' => auth('api')->factory()->getTTL() * 60
             ]
-        ]);
+        ], 200);
     }
     
 
     public function refreshToken(Request $request)
     {
-        $user = Auth::user();
-        $refreshToken = $request->input('refresh_token');
+        try {
+            // Attempt to authenticate the user from the token
+            if (!$user = JWTAuth::parseToken()->authenticate()) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'User not authenticated.'
+                ], 401);
+            }
 
-        $storedToken = DB::table('refresh_tokens')->where('user_id', $user->id)->first();
+            $refreshToken = $request->input('refresh_token');
 
-        if (!$storedToken || !Hash::check($refreshToken, $storedToken->token)) {
-            return response()->json(['status' => 'failed', 'message' => 'Invalid refresh token.'], 401);
+            // Retrieve the stored refresh token for the user
+            $storedToken = DB::table('refresh_tokens')->where('user_id', $user->id)->first();
+
+            // Validate the refresh token
+            if (!$storedToken || !Hash::check($refreshToken, $storedToken->token)) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'Invalid refresh token.'
+                ], 401);
+            }
+
+            // Check if the refresh token has expired
+            if (Carbon::parse($storedToken->expires_at)->isPast()) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'Refresh token expired. Please log in again.'
+                ], 401);
+            }
+
+            // Generate a new access token and refresh token
+            $newAccessToken = Auth::login($user);
+            $newRefreshToken = Hash::make(now());
+
+            // Update the refresh token in the database
+            DB::table('refresh_tokens')->where('user_id', $user->id)->update([
+                'token' => $newRefreshToken,
+                'expires_at' => now()->addDay()
+            ]);
+
+            // Return the new tokens
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Token refreshed successfully.',
+                'data' => [
+                    'access_token' => $newAccessToken,
+                    'refresh_token' => $newRefreshToken,
+                    'token_type' => 'bearer',
+                    'expires_in' => auth('api')->factory()->getTTL() * 60
+                ]
+            ], 200);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Access token has expired. Please log in again.',
+                'error' => $e->getMessage()
+            ], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Invalid access token.',
+                'error' => $e->getMessage()
+            ], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Access token is missing or improperly formatted.',
+                'error' => $e->getMessage()
+            ], 400);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'An error occurred while refreshing the token.',
+                'error' => $e->getMessage()
+            ], 500);
         }
-
-        if (Carbon::parse($storedToken->expires_at)->isPast()) {
-            return response()->json(['status' => 'failed', 'message' => 'Refresh token expired. Please log in again.'], 401);
-        }
-
-        $newAccessToken = Auth::login($user);
-        $newRefreshToken = Hash::make(now());
-
-        DB::table('refresh_tokens')->where('user_id', $user->id)->update([
-            'token' => $newRefreshToken, 'expires_at' => now()->addDay()
-        ]);
-
-        return response()->json([
-            'status' => 'success',
-            'access_token' => $newAccessToken,
-            'refresh_token' => $newRefreshToken,
-            'token_type' => 'bearer'
-        ]);
     }
 
     public function verifyUserEmail(VerifyEmailRequest $request)
@@ -191,38 +234,89 @@ class AuthController extends Controller
 
 
 
-public function profile()
-{
-    $user = Auth::user();
 
-    if (!$user) {
-        return response()->json(['status' => false, 'message' => 'User is not authenticated'], 401);
+    public function profile()
+    {
+        try {
+            // Log the token
+            Log::info('Token:', ['token' => JWTAuth::getToken()]);
+
+            // Retrieve the authenticated user using JWTAuth
+            $user = JWTAuth::parseToken()->authenticate();
+
+            // Log the authenticated user
+            Log::info('Authenticated user:', ['user' => $user]);
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+
+            // Return the user data
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Profile retrieved successfully',
+                'data' => $user
+            ], 200);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Unauthorized: Access token has expired'
+            ], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Unauthorized: Access token is invalid'
+            ], 401);
+        } catch (\Exception $e) {
+            Log::error('Error in profile method: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Failed to retrieve profile',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
-
-   
-    if (!$user->email_verified_at) {
-        return response()->json(['status' => false, 'message' => 'Please verify your email before accessing profile'], 403);
-    }
-
-   
-    if ($user->is_role == 2) {  
-        return new PharmacistResource($user);
-    }
-
-    if ($user->is_role == 1) {  
-        return new PatientResource($user);
-    }
-
-    
-    return response()->json(['status' => false, 'message' => 'Unauthorized role'], 403);
-}
-
     
 
     public function logout()
     {
-        Auth::logout();
-        return response()->json(['status' => 'success', 'message' => 'User has been logged out successfully']);
+        try {
+            // Get the authenticated user
+            $user = Auth::user();
+            
+            if ($user) {
+                // Delete the user's refresh token
+                DB::table('refresh_tokens')
+                    ->where('user_id', $user->id)
+                    ->delete();
+                
+                // Revoke all user tokens
+                $user->tokens()->delete();
+                
+                // Logout the user
+                Auth::logout();
+                
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'User has been logged out successfully'
+                ]);
+            }
+            
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'No authenticated user found'
+            ], 401);
+            
+        } catch (\Exception $e) {
+            \Log::error('Logout error: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'An error occurred during logout'
+            ], 500);
+        }
     }
     public function updateProfile(Request $request)
     {
@@ -335,5 +429,88 @@ public function profile()
         }
     }
    
-   
+    public function getProfile()
+    {
+        try {
+            // Retrieve the authenticated user
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+
+            // Return the user data based on their role
+            if ($user->is_role === 1) { // Admin
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Profile retrieved successfully',
+                    'user' => new AdminResource($user)
+                ]);
+            } elseif ($user->is_role === 2) { // Pharmacist
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Profile retrieved successfully',
+                    'user' => new PharmacistResource($user)
+                ]);
+            } else { // Patient
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Profile retrieved successfully',
+                    'user' => new PatientResource($user)
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error retrieving profile: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Failed to retrieve profile',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function verifyAccessToken()
+    {
+        try {
+            // Attempt to authenticate the user using the token
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'Unauthorized: Access token is invalid or expired'
+                ], 401);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Access token is valid',
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email
+                ]
+            ], 200);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Unauthorized: Access token has expired'
+            ], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Unauthorized: Access token is invalid'
+            ], 401);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'An error occurred while verifying the access token',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
 }

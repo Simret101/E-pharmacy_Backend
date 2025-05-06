@@ -3,8 +3,10 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\PharmacistResource;
+use App\Http\Controllers\Api\PharmacistController;
 use App\Models\Pharmacist;
 use App\Models\User;
+use Illuminate\Support\Facades\Hash;
 use App\Notifications\PharmacistVerificationStatus;
 use App\Notifications\PharmacistStatusUpdated;
 use App\Notifications\AdminPharmacistRegistration;
@@ -416,4 +418,86 @@ class AdminController extends Controller
             ], 500);
         }
     }
+    public function approvePharmacists(Request $request, $id)
+    {
+        $statusController = new PharmacistController();
+        $response = $statusController->approve($id);
+    
+        if ($response->getStatusCode() === 200) {
+            $user = User::find(Pharmacist::find($id)->user_id);
+            if ($user) {
+                $user->notify(new PharmacistStatusUpdated('approved', 'Documents verified'));
+            }
+        }
+    
+        return $response;
+    }
+    
+    public function rejectPharmacists(Request $request, $id)
+    {
+        $statusController = new PharmacistController();
+        $response = $statusController->reject($id);
+    
+        if ($response->getStatusCode() === 200) {
+            $user = User::find(Pharmacist::find($id)->user_id);
+            if ($user) {
+                $user->notify(new PharmacistStatusUpdated('rejected', 'Documents not verified'));
+            }
+        }
+    
+        return $response;
+    }
+
+    public function createAdmin(Request $request)
+    {
+        // Ensure the authenticated user is an admin
+        if (Auth::user()->is_role !== 0) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Unauthorized. Only admins can create another admin.'
+            ], 403);
+        }
+
+        // Validate the request
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email',
+            'password' => 'required|string|min:8',
+            'is_role' => 'required|in:0,1,2', // 0 for admin, 1 for patient, 2 for pharmacist
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            // Create the new admin
+            $admin = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'is_role' => 0, // Set role to admin
+                'status' => 'pending', // Set status to active
+                'email_verified_at' => now(), // Mark email as verified
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Admin created successfully',
+                'data' => $admin
+            ], 201);
+        } catch (\Exception $e) {
+            Log::error('Error creating admin: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'An error occurred while creating the admin',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
 }

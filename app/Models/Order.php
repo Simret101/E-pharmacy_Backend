@@ -14,6 +14,7 @@ class Order extends Model
         'quantity',
         'prescription_image',
         'total_amount',
+        'prescription_uid',
         'status'
     ];
 

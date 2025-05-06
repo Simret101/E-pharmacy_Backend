@@ -13,6 +13,7 @@ class OrderResource extends JsonResource
             'user' => new UserResource($this->whenLoaded('user')),
             'drug' => new DrugResource($this->whenLoaded('drug')),
             'quantity' => $this->quantity,
+            'prescription_uid' => $this->prescription_uid, // Add prescription_uid
             'prescription_image' => $this->prescription_image,
             'prescription_image_thumbnail' => $this->prescription_image ? str_replace('/upload/', '/upload/c_thumb,w_200,h_200/', $this->prescription_image) : null,
             'total_amount' => $this->total_amount,

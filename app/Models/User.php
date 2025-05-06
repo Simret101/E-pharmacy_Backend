@@ -36,7 +36,8 @@ class User extends Authenticatable implements JWTSubject
         'tin_image',
         'license_public_id',
         'tin_public_id',
-        'email_verified_at'
+        'email_verified_at',
+        'google_id'
     ];
 
     /**

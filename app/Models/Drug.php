@@ -46,6 +46,11 @@ class Drug extends Model
         return $this->hasMany(Order::class);
     }
 
+    public function likes()
+    {
+        return $this->hasMany(Like::class);
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

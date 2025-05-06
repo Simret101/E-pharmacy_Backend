@@ -12,17 +12,19 @@ class PharmacistMiddleware
     public function handle(Request $request, Closure $next)
     {
         if (Auth::check()) {
-            
             if (Auth::user()->is_role == 2) {
                 return $next($request);
             } else {
-                
-                Auth::logout();
-                return redirect()->route('login');
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized. Only pharmacists can access this resource.'
+                ], 403);
             }
         } else {
-  
-            return redirect()->route('login');
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthenticated. Please login first.'
+            ], 401);
         }
     }
 }

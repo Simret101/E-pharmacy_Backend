@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 
+use Illuminate\Support\Facades\DB;
+
 class PharmacistController extends Controller
 {
     
@@ -132,5 +134,92 @@ class PharmacistController extends Controller
             'status' => 'success',
             'message' => 'Pharmacist deleted successfully'
         ]);
+    }
+
+
+  public function approve($id)
+    {
+        try {
+            $pharmacist = Pharmacist::find($id);
+
+            if (!$pharmacist) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pharmacist not found'
+                ], 404);
+            }
+
+            DB::beginTransaction();
+
+            // Update pharmacist status
+            $pharmacist->status = 'approved';
+            $pharmacist->status_reason = 'Documents verified';
+            $pharmacist->status_updated_at = now();
+            $pharmacist->save();
+
+            // Update user status
+            $user = User::find($pharmacist->user_id);
+            if ($user) {
+                $user->status = 'approved';
+                $user->save();
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Pharmacist approved successfully'
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Error approving pharmacist: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error approving pharmacist'
+            ], 500);
+        }
+    }
+
+    public function reject($id)
+    {
+        try {
+            $pharmacist = Pharmacist::find($id);
+
+            if (!$pharmacist) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pharmacist not found'
+                ], 404);
+            }
+
+            DB::beginTransaction();
+
+            // Update pharmacist status
+            $pharmacist->status = 'rejected';
+            $pharmacist->status_reason = 'Documents not verified';
+            $pharmacist->status_updated_at = now();
+            $pharmacist->save();
+
+            // Update user status
+            $user = User::find($pharmacist->user_id);
+            if ($user) {
+                $user->status = 'rejected';
+                $user->save();
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Pharmacist rejected successfully'
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Error rejecting pharmacist: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error rejecting pharmacist'
+            ], 500);
+        }
     }
 }
