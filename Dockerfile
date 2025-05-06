@@ -26,5 +26,5 @@ RUN composer install --no-dev --optimize-autoloader
 # Expose port
 EXPOSE 8000
 
-# Run migrations, seed the database, and start the Laravel server
-CMD ["sh", "-c", "php artisan migrate --force && php artisan db:seed --class=DefaultAdminSeeder && php artisan serve --host=0.0.0.0 --port=8000"]
+# Run migrations and start the Laravel server
+CMD ["sh", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"]
