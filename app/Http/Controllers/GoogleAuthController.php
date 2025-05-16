@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Laravel\Socialite\Facades\Socialite;
@@ -10,23 +11,25 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Carbon\Carbon;
+use PHPOpenSourceSaver\JWTAuth\JWTAuth;
 
 class GoogleAuthController extends Controller
 {
     public function redirect()
     {
-        return response()->json([
-            'url' => Socialite::driver('google')->stateless()->redirect()->getTargetUrl()
-        ]);
+        return Socialite::driver('google')->redirect();
     }
 
     public function callback(Request $request)
     {
         try {
-            $googleUser = Socialite::driver('google')->stateless()->user();
+            // Get the Google user
+            $googleUser = Socialite::driver('google')->user();
             
+            // Check if user exists
             $user = User::where('google_id', $googleUser->getId())->first();
 
+            // If user doesn't exist, create a new one
             if (!$user) {
                 $user = User::create([
                     'name' => $googleUser->getName(),
@@ -38,36 +41,16 @@ class GoogleAuthController extends Controller
                 ]);
             }
 
-            // Generate JWT token
-            $token = Auth::login($user);
-            
-            // Generate refresh token
-            $refreshToken = Hash::make(now());
-            
-            // Store refresh token
-            DB::table('refresh_tokens')->updateOrInsert(
-                ['user_id' => $user->id],
-                [
-                    'token' => $refreshToken,
-                    'expires_at' => Carbon::now()->addDay()
-                ]
-            );
+            // Log the user in
+            Auth::login($user);
 
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Login successful',
-                'user' => $user,
-                'access_token' => $token,
-                'refresh_token' => $refreshToken,
-                'token_type' => 'bearer'
-            ]);
+            // Redirect to home with success message
+            return redirect()->route('home')->with('success', 'Successfully logged in with Google');
 
         } catch (\Exception $e) {
             \Log::error('Google OAuth Error: ' . $e->getMessage());
-            return response()->json([
-                'status' => 'failed',
-                'message' => 'Authentication failed. Please try again.'
-            ], 401);
+            // Redirect back with error message instead of JSON response
+            return redirect()->back()->with('error', 'Authentication failed. Please try again.');
         }
     }
 }

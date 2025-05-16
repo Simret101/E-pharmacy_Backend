@@ -20,22 +20,6 @@ class EmailVerificationService
         }
     }
 
-    public function resendLink($email)
-    {
-        $user = User::where("email", $email)->first();
-        if ($user) {
-            $this->sendVerificationLink($user);
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Verification link sent successfully'
-            ]);
-        } else {
-            return response()->json([
-                'status' => 'failed',
-                'message' => 'User not found'
-            ]);
-        }
-    }
 
     public function verifyEmail(string $email, string $token)
     {
@@ -79,6 +63,22 @@ class EmailVerificationService
                 'status' => 'failed',
                 'message' => 'Error verifying email: ' . $e->getMessage()
             ], 500);
+        }
+    }
+    public function resendLink($email)
+    {
+        $user = User::where("email", $email)->first();
+        if ($user) {
+            $this->sendVerificationLink($user);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Verification link sent successfully'
+            ]);
+        } else {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'User not found'
+            ]);
         }
     }
 

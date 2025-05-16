@@ -73,6 +73,11 @@ class CloudinaryService
         }
     }
 
+    public function uploadPrescription(UploadedFile $file)
+    {
+        return $this->uploadImage($file, 'prescriptions');
+    }
+
     public function getImageUrl($url)
     {
         // If the URL is already a Cloudinary URL, return it as is

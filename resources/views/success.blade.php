@@ -76,12 +76,18 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        @foreach(json_decode($order->items, true) as $item)
+                                        @php
+                                            $items = json_decode($order->items, true);
+                                            if (!$items || !is_array($items)) {
+                                                $items = [];
+                                            }
+                                        @endphp
+                                        @foreach($items as $item)
                                         <tr>
-                                            <td>{{ $item['name'] }}</td>
-                                            <td>{{ $item['quantity'] }}</td>
-                                            <td>${{ number_format($item['price'], 2) }}</td>
-                                            <td>${{ number_format($item['subtotal'], 2) }}</td>
+                                            <td>{{ $item['name'] ?? 'N/A' }}</td>
+                                            <td>{{ $item['quantity'] ?? 0 }}</td>
+                                            <td>${{ number_format($item['price'] ?? 0, 2) }}</td>
+                                            <td>${{ number_format($item['subtotal'] ?? 0, 2) }}</td>
                                         </tr>
                                         @endforeach
                                     </tbody>

@@ -58,7 +58,7 @@ class DrugController extends Controller
 
             // Paginate results
             $perPage = $request->per_page ?? 10;
-            $drugs = $query->paginate($perPage);
+            $drugs = $query->with(['creator'])->paginate($perPage)->withQueryString();
 
             return response()->json([
                 'status' => 'success',
@@ -71,6 +71,13 @@ class DrugController extends Controller
                     'per_page' => $drugs->perPage(),
                     'to' => $drugs->lastItem(),
                     'total' => $drugs->total(),
+                    'total_stock' => $drugs->sum('stock'),
+                    'low_stock_count' => $drugs->where('stock', '<', 10)->count()
+                ], 'links' => [
+                    'first' => $drugs->url(1),
+                    'last' => $drugs->url($drugs->lastPage()),
+                    'prev' => $drugs->previousPageUrl(),
+                    'next' => $drugs->nextPageUrl()
                 ]
             ], 200);
         } catch (\Exception $e) {
@@ -85,7 +92,7 @@ class DrugController extends Controller
     public function show($id)
     {
         try {
-            $drug = Drug::with(['likes', 'creator'])->findOrFail($id);
+            $drug = Drug::with(['creator'])->findOrFail($id);
 
             return response()->json([
                 'status' => 'success',
@@ -110,36 +117,56 @@ class DrugController extends Controller
             ], 403);
         }
 
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255|min:1',
-            'description' => 'required|string|max:255|min:1',
-            'brand' => 'required|string|max:255|min:1',
-            'price' => 'required|integer|min:1',
-            'category' => 'required|string|max:255|min:1',
-            'dosage' => 'required|string|max:255|min:1',
-            'stock' => 'required|integer|min:1',
-            'image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Validation error',
-                'errors' => $validator->messages(),
-            ], 422);
-        }
-
         try {
             DB::beginTransaction();
 
-            $imageResult = $this->cloudinaryService->uploadImage($request->file('image'), 'drugs');
+            $validator = Validator::make($request->all(), [
+                'name' => 'required|string|max:255|min:1',
+                'brand' => 'required|string|max:255|min:1',
+                'description' => 'required|string|max:255|min:1',
+                'category' => 'required|string|max:255|min:1',
+                'price' => 'required|numeric|min:1',
+                'stock' => 'required|integer|min:1',
+                'dosage' => 'required|string|max:255|min:1',
+                'prescription_needed' => 'required|in:0,1,true,false',
+                'image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
+                'expires_at' => 'required|date'
+            ]);
 
-            $drugData = $request->except('image');
-            $drugData['image'] = $imageResult['secure_url'];
-            $drugData['public_id'] = $imageResult['public_id'];
-            $drugData['created_by'] = Auth::id();
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Validation error',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
 
-            $drug = Drug::create($drugData);
+            $data = $validator->validated();
+            // Convert prescription_needed to boolean if it's a string
+            if (isset($data['prescription_needed'])) {
+                $data['prescription_needed'] = filter_var($data['prescription_needed'], FILTER_VALIDATE_BOOLEAN);
+            }
+            $data['created_by'] = Auth::id();
+
+            if ($request->hasFile('image')) {
+                try {
+                    $image = $request->file('image');
+                    $result = $this->cloudinaryService->uploadImage($image, 'drugs');
+                    $data['image'] = $result['secure_url'];
+                    $data['public_id'] = $result['public_id'];
+                } catch (\Exception $e) {
+                    DB::rollBack();
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Failed to upload image',
+                        'error' => $e->getMessage()
+                    ], 500);
+                }
+            }
+
+            $data['created_by'] = Auth::id();
+
+            $drug = Drug::create($data);
 
             InventoryLog::create([
                 'drug_id' => $drug->id,
@@ -154,8 +181,9 @@ class DrugController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'Drug created successfully',
-                'data' => new DrugResource($drug)
+                'data' => new DrugResource($drug->load('creator'))
             ], 201);
+
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::error('Drug creation failed:', [
@@ -177,15 +205,19 @@ class DrugController extends Controller
                 return response()->json(['message' => 'Only pharmacists can update drugs.'], 403);
             }
 
-            $validator = Validator::make($request->all(), [
+            // Separate form data and file
+            $formData = $request->except(['image']);
+            
+            // Validate form data
+            $validator = Validator::make($formData, [
                 'name' => 'sometimes|string|max:255|min:1',
                 'description' => 'sometimes|string|max:255|min:1',
                 'brand' => 'sometimes|string|max:255|min:1',
                 'price' => 'sometimes|numeric|min:1',
                 'category' => 'sometimes|string|max:255|min:1',
                 'dosage' => 'sometimes|string|max:255|min:1',
-                'stock' => 'sometimes|integer|min:1',
-                'image' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
+                'stock' => 'sometimes|integer|min:0',
+                'prescription_needed' => 'sometimes|in:0,1,true,false',
             ]);
 
             if ($validator->fails()) {
@@ -199,89 +231,311 @@ class DrugController extends Controller
 
             $drug = Drug::findOrFail($id);
 
-            // Check if user is authorized to update
             if ($drug->created_by !== Auth::id() && Auth::user()->is_role !== 0) {
                 return response()->json([
                     'message' => 'Unauthorized to update this drug'
                 ], 403);
             }
 
-            // Get the current values before update
             $previousStock = $drug->stock;
-            $previousData = $drug->toArray();
 
             // Prepare update data
-            $updateData = [];
-            $fields = ['name', 'description', 'brand', 'price', 'category', 'dosage', 'stock'];
+            $updateData = $validator->validated();
             
-            foreach ($fields as $field) {
-                if ($request->has($field)) {
-                    $updateData[$field] = $request->input($field);
-                }
+            // Handle prescription_needed conversion
+            if (isset($updateData['prescription_needed'])) {
+                $updateData['prescription_needed'] = filter_var($updateData['prescription_needed'], FILTER_VALIDATE_BOOLEAN);
             }
 
-            // Handle image upload if present
+            // Handle image upload if new image is provided
             if ($request->hasFile('image')) {
+                $image = $request->file('image');
+
+                // Validate the image file
+                $imageValidator = Validator::make(['image' => $image], [
+                    'image' => 'required|image|mimes:jpeg,png,jpg|max:2048'
+                ]);
+
+                if ($imageValidator->fails()) {
+                    return response()->json([
+                        'message' => 'Invalid image file',
+                        'errors' => $imageValidator->errors()
+                    ], 422);
+                }
+
                 // Delete old image if exists
                 if ($drug->public_id) {
                     try {
                         $this->cloudinaryService->deleteImage($drug->public_id);
                     } catch (\Exception $e) {
-                        \Log::error('Failed to delete old image: ' . $e->getMessage());
+                        \Log::warning('Failed to delete old image:', [
+                            'error' => $e->getMessage(),
+                            'drug_id' => $id
+                        ]);
+                    }
+                }
+
+                // Upload new image
+                $result = $this->cloudinaryService->uploadImage($image, 'drugs');
+                $updateData['image'] = $result['secure_url'];
+                $updateData['public_id'] = $result['public_id'];
+            }
+
+            // Add updated_by
+            $updateData['updated_by'] = Auth::id();
+
+        // Update the drug with prepared data
+        $drug->update($updateData);
+
+        // Handle image upload if present
+        if ($request->hasFile('image')) {
+            try {
+                $image = $request->file('image');
+                
+                // Validate image size
+                if ($image->getSize() > 2048 * 1024) {
+                    return response()->json([
+                        'message' => 'Image too large. Maximum size is 2MB.',
+                        'error' => 'image_too_large'
+                    ], 422);
+                }
+
+                // Delete old image if exists
+                if ($drug->public_id) {
+                    try {
+                        $this->cloudinaryService->deleteImage($drug->public_id);
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to delete old image: ' . $e->getMessage());
                     }
                 }
                 
-                $imageResult = $this->cloudinaryService->uploadImage($request->file('image'), 'drugs');
+                // Upload new image
+                $imageResult = $this->cloudinaryService->uploadImage($image, 'drugs');
                 $updateData['image'] = $imageResult['secure_url'];
-                $updateData['public_id'] = $imageResult['public_id'];
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'Failed to upload image',
+                    'error' => $e->getMessage()
+                ], 500);
             }
+        }
 
-            // Log the update data for debugging
-            \Log::info('Updating drug with data:', $updateData);
+        // Log the final update data
+        \Log::info('Final update data:', $updateData);
 
-            // Update the drug
+        // Log the final update data
+        \Log::info('Final update data:', $updateData);
+
+        // Update the drug using mass assignment
+        try {
             $drug->fill($updateData);
             $drug->save();
+            \Log::info('Drug updated successfully');
+
+            // Create inventory log if stock changed
+            if (isset($allData['stock']) && $allData['stock'] != $previousStock) {
+                InventoryLog::create([
+                    'drug_id' => $drug->id,
+                    'user_id' => Auth::id(),
+                    'change_type' => 'update',
+                    'quantity_changed' => $allData['stock'] - $previousStock,
+                    'reason' => 'Stock updated from ' . $previousStock . ' to ' . $allData['stock']
+                ]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Drug updated successfully',
+                'data' => new DrugResource($drug->load('creator'))
+            ], 200);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Failed to update drug:', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'drug_id' => $drug->id,
+                'update_data' => $allData
+            ]);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update drug',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+
+        // Update the drug using mass assignment
+        try {
+            $drug->fill($updateData);
+            $drug->save();
+            \Log::info('Drug updated successfully');
 
             // Create inventory log if stock changed
             if (isset($updateData['stock']) && $updateData['stock'] != $previousStock) {
                 InventoryLog::create([
                     'drug_id' => $drug->id,
                     'user_id' => Auth::id(),
-                    'change_type' => 'stock_update',
+                    'change_type' => 'update',
                     'quantity_changed' => $updateData['stock'] - $previousStock,
-                    'reason' => 'Stock update',
+                    'reason' => 'Stock updated from ' . $previousStock . ' to ' . $updateData['stock']
                 ]);
             }
-
-            // Refresh the model to get updated data
-            $drug->refresh();
 
             DB::commit();
 
             return response()->json([
+                'status' => 'success',
                 'message' => 'Drug updated successfully',
-                'data' => new DrugResource($drug)
+                'data' => new DrugResource($drug->load('creator'))
             ], 200);
 
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            DB::rollBack();
-            return response()->json([
-                'message' => 'Drug not found',
-                'error' => $e->getMessage()
-            ], 404);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Drug update failed:', [
+            \Log::error('Failed to update drug:', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'drug_id' => $drug->id,
+                'update_data' => $updateData
             ]);
             return response()->json([
+                'status' => 'error',
                 'message' => 'Failed to update drug',
                 'error' => $e->getMessage()
             ], 500);
         }
+    } catch (\Exception $e) {
+        DB::rollBack();
+        \Log::error('Drug update failed:', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Failed to update drug',
+            'error' => $e->getMessage()
+        ], 500);
     }
+}
+public function getDrugsByCreator(Request $request, $username)
+{
+    try {
+        $query = Drug::whereHas('creator', function($query) use ($username) {
+            $query->where('username', $username);
+        })->with('creator');
+
+        // Apply search
+        if ($request->has('search')) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('name', 'like', "%{$searchTerm}%")
+                  ->orWhere('description', 'like', "%{$searchTerm}%")
+                  ->orWhere('brand', 'like', "%{$searchTerm}%");
+            });
+        }
+
+        // Apply sorting
+        $sortBy = $request->sort_by ?? 'created_at';
+        $sortOrder = $request->sort_order ?? 'desc';
+        $query->orderBy($sortBy, $sortOrder);
+
+        // Paginate results
+        $perPage = $request->per_page ?? 10;
+        $drugs = $query->paginate($perPage)->withQueryString();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Drugs retrieved successfully',
+            'data' => DrugResource::collection($drugs),
+            'meta' => [
+                'current_page' => $drugs->currentPage(),
+                'from' => $drugs->firstItem(),
+                'last_page' => $drugs->lastPage(),
+                'per_page' => $drugs->perPage(),
+                'to' => $drugs->lastItem(),
+                'total' => $drugs->total(),
+                'total_stock' => $drugs->sum('stock'),
+                'low_stock_count' => $drugs->where('stock', '<', 10)->count()
+            ],
+            'links' => [
+                'first' => $drugs->url(1),
+                'last' => $drugs->url($drugs->lastPage()),
+                'prev' => $drugs->previousPageUrl(),
+                'next' => $drugs->nextPageUrl()
+            ]
+        ], 200);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Failed to retrieve drugs',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+public function getByCategory(Request $request, $category)
+{
+    try {
+        $query = Drug::with(['creator'])->byCategory($category);
+
+        // Apply search
+        if ($request->has('search')) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('name', 'like', "%{$searchTerm}%")
+                  ->orWhere('description', 'like', "%{$searchTerm}%")
+                  ->orWhere('brand', 'like', "%{$searchTerm}%");
+            });
+        }
+
+        // Apply sorting
+        $sortBy = $request->sort_by ?? 'created_at';
+        $sortOrder = $request->sort_order ?? 'desc';
+        $query->orderBy($sortBy, $sortOrder);
+
+        // Paginate results
+        $perPage = $request->per_page ?? 10;
+        $drugs = $query->paginate($perPage)->withQueryString();
+
+        if ($drugs->isEmpty()) {
+            return response()->json([
+                'status' => 'success',
+                'message' => 'No drugs found in this category',
+                'data' => []
+            ], 200);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Drugs retrieved successfully',
+            'data' => DrugResource::collection($drugs),
+            'meta' => [
+                'current_page' => $drugs->currentPage(),
+                'from' => $drugs->firstItem(),
+                'last_page' => $drugs->lastPage(),
+                'per_page' => $drugs->perPage(),
+                'to' => $drugs->lastItem(),
+                'total' => $drugs->total(),
+                'total_stock' => $drugs->sum('stock'),
+                'low_stock_count' => $drugs->where('stock', '<', 10)->count()
+            ],
+            'links' => [
+                'first' => $drugs->url(1),
+                'last' => $drugs->url($drugs->lastPage()),
+                'prev' => $drugs->previousPageUrl(),
+                'next' => $drugs->nextPageUrl()
+            ]
+        ], 200);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Failed to retrieve drugs',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
 
     public function destroy($id)
     {
@@ -343,21 +597,50 @@ class DrugController extends Controller
         }
 
         try {
-            $drugs = Drug::where('created_by', $user->id)
-                ->orderBy('created_at', 'desc')
-                ->get();
+            $query = Drug::where('created_by', $user->id);
+
+            // Apply search
+            if ($request->has('search')) {
+                $searchTerm = $request->search;
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->where('name', 'like', "%{$searchTerm}%")
+                      ->orWhere('description', 'like', "%{$searchTerm}%")
+                      ->orWhere('brand', 'like', "%{$searchTerm}%");
+                });
+            }
+
+            // Apply sorting
+            $sortBy = $request->sort_by ?? 'created_at';
+            $sortOrder = $request->sort_order ?? 'desc';
+            $query->orderBy($sortBy, $sortOrder);
+
+            // Paginate results
+            $perPage = $request->per_page ?? 10;
+            $drugs = $query->paginate($perPage)->withQueryString();
 
             if ($drugs->isEmpty()) {
                 return response()->json([
+                    'status' => 'success',
                     'message' => 'No drugs found for this user',
                     'data' => []
-                ]);
+                ], 200);
             }
 
             return response()->json([
+                'status' => 'success',
                 'message' => 'Drugs retrieved successfully',
-                'data' => $drugs
-            ]);
+                'data' => DrugResource::collection($drugs),
+                'meta' => [
+                    'current_page' => $drugs->currentPage(),
+                    'from' => $drugs->firstItem(),
+                    'last_page' => $drugs->lastPage(),
+                    'per_page' => $drugs->perPage(),
+                    'to' => $drugs->lastItem(),
+                    'total' => $drugs->total(),
+                    'total_stock' => $drugs->sum('stock'),
+                    'low_stock_count' => $drugs->where('stock', '<', 10)->count()
+                ]
+            ], 200);
         } catch (\Exception $e) {
             \Log::error('DrugController@getMyDrugs: Error', [
                 'error' => $e->getMessage(),
@@ -365,6 +648,7 @@ class DrugController extends Controller
             ]);
             
             return response()->json([
+                'status' => 'error',
                 'message' => 'Error retrieving drugs',
                 'error' => $e->getMessage()
             ], 500);

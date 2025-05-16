@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\PharmacistResource;
@@ -19,7 +19,6 @@ class PharmacistController extends Controller
     {
         $pharmacists = User::where('is_role', 2);  
 
-        
         $search_param = $request->query('search');
         if ($search_param) {
             $pharmacists->where(function($query) use ($search_param) {
@@ -30,47 +29,73 @@ class PharmacistController extends Controller
             });
         }
 
-        
         $pharmacists = $pharmacists->get();
 
-        
-        if ($pharmacists->isEmpty()) {
+        return response()->json([
+            'status' => 'success',
+            'data' => $pharmacists
+        ]);
+    }
+
+    public function show($id)
+    {
+        $pharmacist = User::where('id', $id)
+            ->where('is_role', 2)
+            ->first();
+
+        if (!$pharmacist) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'No pharmacists found',
-                'data' => []
+                'message' => 'Pharmacist not found'
             ], 404);
         }
 
-        
         return response()->json([
             'status' => 'success',
-            'pharmacists' => $pharmacists
+            'data' => $pharmacist
         ]);
     }
 
-   
-    public function show(User $pharmacist)
+    public function getByUsername(Request $request, $username)
     {
-        
-        if ($pharmacist->is_role !== 2) {
+        $pharmacist = User::where('username', $username)
+            ->where('is_role', 2)
+            ->first();
+
+        if (!$pharmacist) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'User is not a pharmacist'
-            ], 400);
+                'message' => 'Pharmacist not found'
+            ], 404);
         }
 
-        
         return response()->json([
             'status' => 'success',
-            'data' => new PharmacistResource($pharmacist)
+            'data' => $pharmacist
         ]);
     }
 
-    
+    public function getPatient(Request $request, $patientId)
+    {
+        $patient = User::where('id', $patientId)
+            ->where('is_role', 1)
+            ->first();
+
+        if (!$patient) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Patient not found'
+            ], 404);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $patient
+        ]);
+    }
+
     public function update(Request $request, User $pharmacist)
     {
-        
         if ($pharmacist->is_role !== 2) {
             return response()->json([
                 'status' => 'error',
@@ -78,7 +103,6 @@ class PharmacistController extends Controller
             ], 400);
         }
 
-        
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|max:255|email|unique:users,email,' . $pharmacist->id,
@@ -87,14 +111,11 @@ class PharmacistController extends Controller
             'license_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',  
         ]);
 
-        
         if ($request->hasFile('license_image')) {
-            
             if ($pharmacist->license_image && Storage::exists('public/' . $pharmacist->license_image)) {
                 Storage::delete('public/' . $pharmacist->license_image);
             }
 
-            
             $licenseImagePath = $request->file('license_image')->store('licenses', 'public');
             $pharmacist->license_image = $licenseImagePath;
         }
@@ -111,30 +132,6 @@ class PharmacistController extends Controller
     }
 
     
-    public function destroy(User $pharmacist)
-    {
-        
-        if ($pharmacist->is_role !== 2) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User is not a pharmacist'
-            ], 400);
-        }
-
-     
-        if ($pharmacist->license_image && Storage::exists('public/' . $pharmacist->license_image)) {
-            Storage::delete('public/' . $pharmacist->license_image);
-        }
-
-        
-        $pharmacist->delete();
-
-        
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Pharmacist deleted successfully'
-        ]);
-    }
 
 
   public function approve($id)

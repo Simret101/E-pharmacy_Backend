@@ -11,12 +11,13 @@ class UserResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            'username' => $this->username,
             'email' => $this->email,
-            'phone' => $this->phone,
-            'address' => $this->address,
-            'is_role' => $this->is_role,
+            'role' => $this->role,
+            'profile_image' => $this->profile_image,
+            'cloudinary_public_id' => $this->cloudinary_public_id,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
     }
-} 
+}

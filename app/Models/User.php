@@ -8,6 +8,7 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Services\UsernameGenerator;
 
 class User extends Authenticatable implements JWTSubject
 {
@@ -22,23 +23,38 @@ class User extends Authenticatable implements JWTSubject
         'name',
         'email',
         'password',
+        'phone',
+        'address',
         'is_role',
         'status',
-        'phone_number',
-        'address',
-        'lat',
-        'lng',
-        'pharmacy_name',
-        'tin_number',
+        'profile_image',
+        'cloudinary_public_id',
+        'reset_token',
+        'reset_token_expires_at',
+        'username',
         'bank_name',
         'account_number',
         'license_image',
         'tin_image',
         'license_public_id',
         'tin_public_id',
+        'pharmacy_name',
+        'tin_number',
+        'lat',
+        'lng',
         'email_verified_at',
-        'google_id'
+        'google_id',
+        'remember_token'
     ];
+
+    /**
+     * The attributes that should be hidden for serialization.
+     */
+
+    public function carts()
+    {
+        return $this->hasMany(Cart::class);
+    }
 
     /**
      * The attributes that should be hidden for serialization.
@@ -48,6 +64,36 @@ class User extends Authenticatable implements JWTSubject
     protected $hidden = [
         'password',
         'remember_token',
+        'google_id',
+        'license_public_id',
+        'tin_public_id'
+    ];
+
+    /**
+     * The attributes that should be visible for serialization.
+     *
+     * @var array<int, string>
+     */
+    protected $visible = [
+        'id',
+        'name',
+        'email',
+        'profile_image',
+        'cloudinary_public_id',
+        'is_role',
+        'status',
+        'phone',
+        'address',
+        'pharmacy_name',
+        'username',
+        'bank_name',
+        'account_number',
+        'license_image',
+        'tin_image',
+        'lat',
+        'lng',
+        'created_at',
+        'updated_at'
     ];
 
     /**
@@ -67,10 +113,21 @@ class User extends Authenticatable implements JWTSubject
         ];
     }
 
-    public function patient()
+    public static function boot()
     {
-        return $this->hasOne(Patient::class);
+        parent::boot();
+
+        static::creating(function ($user) {
+            // Generate username if not provided
+            if (empty($user->username)) {
+                $user->username = app(UsernameGenerator::class)->generateUsername($user->name);
+            }
+        });
+
+
     }
+
+
 
     public function pharmacist()
     {

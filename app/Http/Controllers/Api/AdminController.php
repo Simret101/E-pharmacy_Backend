@@ -1,5 +1,5 @@
 <?php
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\PharmacistResource;
@@ -371,14 +371,6 @@ class AdminController extends Controller
 
     public function getAllPharmacists(Request $request)
     {
-        // Check if user is admin
-        if (Auth::user()->is_role !== 0) {
-            return response()->json([
-                'status' => 'failed',
-                'message' => 'Unauthorized. Only admins can access this endpoint.'
-            ], 403);
-        }
-
         try {
             $query = User::where('is_role', 2); // Get only pharmacists
 
@@ -495,6 +487,106 @@ class AdminController extends Controller
             return response()->json([
                 'status' => 'failed',
                 'message' => 'An error occurred while creating the admin',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getAllPatients(Request $request)
+    {
+        try {
+            $query = User::where('is_role', 1);
+
+            // Apply search
+            if ($request->has('search')) {
+                $searchTerm = $request->search;
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->where('name', 'like', "%{$searchTerm}%")
+                      ->orWhere('email', 'like', "%{$searchTerm}%")
+                      ->orWhere('phone', 'like', "%{$searchTerm}%")
+                      ->orWhere('address', 'like', "%{$searchTerm}%");
+                });
+            }
+
+            // Apply filters
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+            if ($request->has('created_at')) {
+                $query->whereDate('created_at', $request->created_at);
+            }
+
+            // Apply sorting
+            $sortBy = $request->sort_by ?? 'created_at';
+            $sortOrder = $request->sort_order ?? 'desc';
+            $query->orderBy($sortBy, $sortOrder);
+
+            // Paginate results
+            $perPage = $request->per_page ?? 10;
+            $patients = $query->paginate($perPage)->withQueryString();
+
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Patients retrieved successfully',
+                'data' => $patients,
+                'meta' => [
+                    'current_page' => $patients->currentPage(),
+                    'from' => $patients->firstItem(),
+                    'last_page' => $patients->lastPage(),
+                    'per_page' => $patients->perPage(),
+                    'to' => $patients->lastItem(),
+                    'total' => $patients->total(),
+                    'active_count' => $patients->where('status', 'active')->count(),
+                    'inactive_count' => $patients->where('status', 'inactive')->count()
+                ],
+                'links' => [
+                    'first' => $patients->url(1),
+                    'last' => $patients->url($patients->lastPage()),
+                    'prev' => $patients->previousPageUrl(),
+                    'next' => $patients->nextPageUrl()
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve patients',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getPatient($id)
+    {
+        try {
+            $patient = User::where('is_role', 1)->findOrFail($id);
+            return response()->json([
+                'status' => 'success',
+                'data' => $patient
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve patient',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function updatePatientStatus(Request $request, $id)
+    {
+        try {
+            $patient = User::where('is_role', 1)->findOrFail($id);
+            $patient->status = $request->status;
+            $patient->save();
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Patient status updated successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update patient status',
                 'error' => $e->getMessage()
             ], 500);
         }

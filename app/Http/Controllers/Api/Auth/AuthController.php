@@ -68,6 +68,7 @@ class AuthController extends Controller
         if ($request->filled('place_name') && $request->filled('lat') && $request->filled('lng')) {
             $data['place_name'] = $request->input('place_name');
             $data['address'] = $request->input('address');
+            $data['status'] = 'pending';
             $data['lat'] = $request->input('lat');
             $data['lng'] = $request->input('lng');
         }

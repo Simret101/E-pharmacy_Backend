@@ -10,17 +10,21 @@
         "algolia/algoliasearch-client-php": "^4.16",
         "cloudinary/cloudinary_php": "^3.1",
         "dagim/telebirr-api": "dev-main",
+        "google/cloud-vision": "^2.0",
+        "guzzlehttp/guzzle": "^7.9",
         "ignited/laravel-omnipay": "3.*",
         "khanamiryan/qrcode-detector-decoder": "^2.0",
         "laravel/framework": "^11.31",
         "laravel/sanctum": "^4.1",
         "laravel/scout": "^10.13",
-        "laravel/socialite": "^5.19",
+        "laravel/socialite": "^5.20",
         "laravel/tinker": "^2.9",
         "league/omnipay": "^3.2",
         "omnipay/paypal": "^3.0",
         "php-open-source-saver/jwt-auth": "^2.3",
-        "pusher/pusher-php-server": "^7.2"
+        "pusher/pusher-php-server": "^7.2",
+        "spatie/laravel-permission": "^6.17",
+        "thiagoalessio/tesseract_ocr": "^2.13"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
@@ -29,7 +33,7 @@
         "laravel/sail": "^1.26",
         "mockery/mockery": "^1.6",
         "nunomaduro/collision": "^8.1",
-        "phpunit/phpunit": "^11.0.1"
+        "phpunit/phpunit": "^11.5"
     },
     "autoload": {
         "psr-4": {

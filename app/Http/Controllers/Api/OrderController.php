@@ -17,6 +17,13 @@ use App\Models\User;
 use App\Notifications\OrderStatusNotification;
 use App\Notifications\PrescriptionApprovalNotification;
 use App\Notifications\PrescriptionRejectionNotification;
+use App\Notifications\OrderShippedNotification;
+use App\Notifications\OrderDeliveredNotification;
+use App\Notifications\OrderCancelledNotification;
+use App\Notifications\PharmacistOrderShippedNotification;
+use App\Notifications\PharmacistOrderDeliveredNotification;
+use App\Notifications\PharmacistOrderCancelledNotification;
+use App\Notifications\PharmacistPaymentReceivedNotification;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
 use App\Services\NotificationService;
@@ -93,10 +100,40 @@ class OrderController extends Controller
                 $drug->stock -= $request->quantity;
                 $drug->save();
 
-                // Send notification to the pharmacist who created the drug
-                $pharmacist = User::find($drug->user_id); // Assuming `user_id` in the `drugs` table refers to the pharmacist
-                if ($pharmacist && $pharmacist->is_role === 2) { // Ensure the user is a pharmacist
-                    $this->notificationService->sendOrderNotificationToPharmacist($order, $pharmacist);
+                // Send order created notification to user and pharmacist
+                $user = Auth::user();
+                if ($user) {
+                    $user->notify((new OrderStatusNotification($order, 'Your order has been created successfully. We will process it shortly.'))->delay(now()->addSeconds(5)));
+                }
+
+                // Notify pharmacist about new order
+                $pharmacist = User::find($order->drug->created_by);
+                if ($pharmacist) {
+                    $pharmacist->notify((new OrderStatusNotification($order, 'A new order requires your review. Please check the prescription.'))->delay(now()->addSeconds(5)));
+                }
+
+                // If it's a prescription order, send approval notification to pharmacist
+                if ($order->prescription_uid) {
+                    $prescription = Prescription::where('prescription_uid', $order->prescription_uid)->first();
+                    if ($prescription) {
+                        DB::beginTransaction();
+                        try {
+                            // Notify pharmacist about new prescription review
+                            $pharmacist = User::find($order->drug->created_by);
+                            if ($pharmacist) {
+                                $pharmacist->notify((new PrescriptionEmailApprovalNotification($order, $prescription))->delay(now()->addSeconds(5)));
+                            }
+                            
+                            // Send the approval notification
+                            $user->notify((new PrescriptionApprovalNotification($order, $prescription, $order->refill_allowed))->delay(now()->addSeconds(5)));
+                            
+                            DB::commit();
+                        } catch (\Exception $e) {
+                            DB::rollBack();
+                            \Log::error('Error sending prescription notification: ' . $e->getMessage());
+                            throw $e;
+                        }
+                    }
                 }
             }
 
@@ -149,11 +186,25 @@ class OrderController extends Controller
         // Send notifications based on the updated status
         if ($order->prescription_status === 'approved') {
             if ($prescription) {
-                $this->notificationService->sendPrescriptionApprovalNotification($order, $prescription);
+                // Notify user
+                $order->user->notify(new OrderStatusNotification($order, 'Your prescription has been approved. Your order will be processed shortly.'));
+                
+                // Notify pharmacist
+                $pharmacist = User::find($order->drug->created_by);
+                if ($pharmacist) {
+                    $pharmacist->notify(new OrderStatusNotification($order, 'A prescription has been approved. Payment is pending.'));
+                }
             }
         } elseif ($order->prescription_status === 'rejected') {
             if ($prescription) {
-                $this->notificationService->sendPrescriptionRejectionNotification($order, $prescription);
+                // Notify user
+                $order->user->notify(new OrderStatusNotification($order, 'Your prescription has been rejected. Please contact customer support for more information.'));
+                
+                // Notify pharmacist
+                $pharmacist = User::find($order->drug->created_by);
+                if ($pharmacist) {
+                    $pharmacist->notify(new OrderStatusNotification($order, 'A prescription has been rejected.'));
+                }
             }
         }
 
@@ -164,22 +215,73 @@ class OrderController extends Controller
         ]);
     }
 
-    public function index()
+    public function index(Request $request)
     {
-        $orders = Order::with(['drug', 'prescription'])
-            ->where('user_id', Auth::id())
-            ->orderBy('created_at', 'desc')
-            ->paginate(10);
+        try {
+            $query = Order::with(['drug', 'prescription'])->where('user_id', Auth::id());
 
-        return response()->json([
-            'data' => $orders,
-            'meta' => [
-                'current_page' => $orders->currentPage(),
-                'last_page' => $orders->lastPage(),
-                'per_page' => $orders->perPage(),
-                'total' => $orders->total(),
-            ]
-        ]);
+            // Apply search
+            if ($request->has('search')) {
+                $searchTerm = $request->search;
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->whereHas('drug', function($drugQuery) use ($searchTerm) {
+                        $drugQuery->where('name', 'like', "%{$searchTerm}%")
+                                ->orWhere('description', 'like', "%{$searchTerm}%")
+                                ->orWhere('brand', 'like', "%{$searchTerm}%");
+                    })
+                    ->orWhere('prescription_uid', 'like', "%{$searchTerm}%");
+                });
+            }
+
+            // Apply filters
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+            if ($request->has('start_date')) {
+                $query->whereDate('created_at', '>=', $request->start_date);
+            }
+            if ($request->has('end_date')) {
+                $query->whereDate('created_at', '<=', $request->end_date);
+            }
+
+            // Apply sorting
+            $sortBy = $request->sort_by ?? 'created_at';
+            $sortOrder = $request->sort_order ?? 'desc';
+            $query->orderBy($sortBy, $sortOrder);
+
+            // Paginate results
+            $perPage = $request->per_page ?? 10;
+            $orders = $query->paginate($perPage)->withQueryString();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Orders retrieved successfully',
+                'data' => $orders,
+                'meta' => [
+                    'current_page' => $orders->currentPage(),
+                    'from' => $orders->firstItem(),
+                    'last_page' => $orders->lastPage(),
+                    'per_page' => $orders->perPage(),
+                    'to' => $orders->lastItem(),
+                    'total' => $orders->total(),
+                    'total_amount' => $orders->sum('total_amount'),
+                    'pending_count' => $orders->where('status', 'pending')->count(),
+                    'completed_count' => $orders->where('status', 'completed')->count()
+                ],
+                'links' => [
+                    'first' => $orders->url(1),
+                    'last' => $orders->url($orders->lastPage()),
+                    'prev' => $orders->previousPageUrl(),
+                    'next' => $orders->nextPageUrl()
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve orders',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function show($id)
@@ -315,10 +417,66 @@ class OrderController extends Controller
         }
     }
 
-    public function userOrders()
+    public function userOrders(Request $request)
     {
-        $user = Auth::user();
-        $orders = Order::with(['drug'])->where('user_id', $user->id)->get();
-        return OrderResource::collection($orders);
+        try {
+            $query = Order::with(['drug', 'prescription'])->where('user_id', Auth::id());
+
+            // Apply search
+            if ($request->has('search')) {
+                $searchTerm = $request->search;
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->whereHas('drug', function($drugQuery) use ($searchTerm) {
+                        $drugQuery->where('name', 'like', "%{$searchTerm}%")
+                                ->orWhere('description', 'like', "%{$searchTerm}%")
+                                ->orWhere('brand', 'like', "%{$searchTerm}%");
+                    })
+                    ->orWhere('prescription_uid', 'like', "%{$searchTerm}%");
+                });
+            }
+
+            // Apply filters
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+            if ($request->has('start_date')) {
+                $query->whereDate('created_at', '>=', $request->start_date);
+            }
+            if ($request->has('end_date')) {
+                $query->whereDate('created_at', '<=', $request->end_date);
+            }
+
+            // Apply sorting
+            $sortBy = $request->sort_by ?? 'created_at';
+            $sortOrder = $request->sort_order ?? 'desc';
+            $query->orderBy($sortBy, $sortOrder);
+
+            // Paginate results
+            $perPage = $request->per_page ?? 10;
+            $orders = $query->paginate($perPage)->withQueryString();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Orders retrieved successfully',
+                'data' => OrderResource::collection($orders),
+                'meta' => [
+                    'current_page' => $orders->currentPage(),
+                    'from' => $orders->firstItem(),
+                    'last_page' => $orders->lastPage(),
+                    'per_page' => $orders->perPage(),
+                    'to' => $orders->lastItem(),
+                    'total' => $orders->total(),
+                    'total_amount' => $orders->sum('total_amount'),
+                    'pending_count' => $orders->where('status', 'pending')->count(),
+                    'completed_count' => $orders->where('status', 'completed')->count()
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve orders',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

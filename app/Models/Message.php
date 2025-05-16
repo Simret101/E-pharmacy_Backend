@@ -2,24 +2,24 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Message extends Model
 {
-    use HasFactory;
+    protected $table = 'chat_messages';
 
     protected $fillable = [
         'sender_id',
         'receiver_id',
         'message',
-        'type',
-        'file_url',
-        'is_read',
+        'file_path',
+        'file_type',
+        'file_name',
+        'is_read'
     ];
 
     protected $casts = [
-        'is_read' => 'boolean',
+        'is_read' => 'boolean'
     ];
 
     public function sender()

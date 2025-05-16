@@ -14,6 +14,8 @@ class Prescription extends Model
         'refill_allowed',
         'refill_used',
         'status',
+        'ocr_text',
+        'ocr_text_hash',
     ];
 
     

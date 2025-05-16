@@ -11,16 +11,21 @@ class Pharmacist extends Model
 {
     use HasFactory, Searchable;
 
-    protected $table = 'users';
+    protected $table = 'pharmacists';
 
     protected $fillable = [
         'user_id',
         'license_number',
+        'license_expiry_date',
         'license_image',
+        'license_public_id',
         'pharmacy_name',
         'pharmacy_address',
         'pharmacy_phone',
-        'status'
+        'status',
+        'status_reason',
+        'status_updated_at',
+        'tin_public_id'
     ];
 
     protected $casts = [
@@ -36,7 +41,7 @@ class Pharmacist extends Model
 
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id', 'id');
     }
 
     public function drugs()

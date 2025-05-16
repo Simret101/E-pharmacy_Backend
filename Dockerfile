@@ -14,7 +14,8 @@ RUN apt-get update && \
     unzip \
     git \
     libzip-dev \
-    && docker-php-ext-install pdo pdo_mysql bcmath zip \
+    libcurl4-openssl-dev \ # Install cURL and OpenSSL support for PayPal
+    && docker-php-ext-install pdo pdo_mysql bcmath zip curl \ # Install cURL extension
     && rm -rf /var/lib/apt/lists/*
 
 # Install Composer

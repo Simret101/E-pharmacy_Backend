@@ -11,10 +11,13 @@ class Order extends Model
     protected $fillable = [
         'user_id',
         'drug_id',
-        'quantity',
-        'prescription_image',
-        'total_amount',
         'prescription_uid',
+        'prescription_image',
+        'refill_allowed',
+        'refill_used',
+        'prescription_status',
+        'quantity',
+        'total_amount',
         'status'
     ];
 
@@ -45,5 +48,10 @@ class Order extends Model
         
         // Otherwise, construct the Cloudinary URL
         return "https://res.cloudinary.com/" . config('cloudinary.cloud_name') . "/image/upload/" . $value;
+    }
+
+    public function prescription()
+    {
+        return $this->belongsTo(Prescription::class, 'prescription_uid', 'prescription_uid');
     }
 }

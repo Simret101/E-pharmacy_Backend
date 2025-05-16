@@ -83,7 +83,19 @@ public function success(Request $request)
 
                 // Get order items to find pharmacist
                 $items = json_decode($order->items, true);
+                
+                // Check if items is null or not an array
+                if (!$items || !is_array($items)) {
+                    $items = [];
+                }
+                
+                // Get drug IDs from items
                 $drugIds = array_column($items, 'drug_id');
+                
+                // Filter out any null or invalid drug IDs
+                $drugIds = array_filter($drugIds, function($id) {
+                    return !empty($id) && is_numeric($id);
+                });
                 
                 // Get unique pharmacists for the drugs in the order
                 $pharmacists = User::whereIn('id', function($query) use ($drugIds) {

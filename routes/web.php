@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Events\PersonMoved;
 
 use App\Http\Controllers\PaymentController;
-
+use App\Http\Controllers\Api\AdminController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Api\PatientController;
@@ -47,8 +47,19 @@ Route::get('/password/reset/', function () {
 
 
 
-//PayPal Payment Route
+// Home Route
+Route::get('/', function () {
+    return view('welcome');
+})->name('home');
+
+// PayPal Payment Route
 Route::post('/paypal/process', [PaymentController::class, 'pay'])->name('paypal.process');
+
+// Google Authentication Routes
+Route::get('/auth/google', [\App\Http\Controllers\GoogleAuthController::class, 'redirect'])->name('google.redirect');
+Route::get('/auth/google/callback', [\App\Http\Controllers\GoogleAuthController::class, 'callback'])->name('google.callback');
+Route::get('/admin/license-image/{id}', [AdminController::class, 'viewLicenseImage']);
+Route::get('/admin/pharmacist/action/{id}', [AdminController::class, 'handlePharmacistAction'])->name('admin.pharmacist.action');
 Route::get('/success', [PaymentController::class, 'success'])->name('payment.success');
 Route::get('/error', [PaymentController::class, 'error'])->name('payment.error');
 

@@ -8,90 +8,330 @@ use App\Models\Prescription;
 use App\Notifications\OrderStatusNotification;
 use App\Notifications\PrescriptionApprovalNotification;
 use App\Notifications\PrescriptionRejectionNotification;
+use App\Notifications\PaymentConfirmationNotification;
+use App\Notifications\PrescriptionEmailApprovalNotification;
 use Illuminate\Support\Facades\Log;
 
 class NotificationService
 {
-    public function sendOrderStatusNotification(Order $order, string $message)
+    protected function notifyUser(User $user, $notification, array $context = []): bool
     {
         try {
-            $user = $order->user;
-            $user->notify(new OrderStatusNotification($order, $message));
-            
-            Log::info('Order status notification sent', [
-                'order_id' => $order->id,
+            $user->notify($notification);
+            Log::channel('notifications')->info('Notification sent', array_merge([
                 'user_id' => $user->id,
-                'message' => $message
-            ]);
-            
+                'notification' => class_basename($notification)
+            ], $context));
             return true;
         } catch (\Exception $e) {
-            Log::error('Failed to send order status notification', [
-                'error' => $e->getMessage(),
+            Log::channel('notifications')->error('Failed to send notification', array_merge([
+                'user_id' => $user->id ?? null,
+                'notification' => class_basename($notification),
+                'error' => $e->getMessage()
+            ], $context));
+            return false;
+        }
+    }
+
+    public function sendOrderStatusNotification(Order $order, string $message): bool
+    {
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
+            return false;
+        }
+
+        return $this->notifyUser($order->user, new OrderStatusNotification($order, $message), [
+            'order_id' => $order->id,
+            'message' => $message
+        ]);
+    }
+
+    public function sendOrderCreatedNotification(Order $order): bool
+{
+    if (!$order->user) {
+        Log::warning('Order has no associated user', ['order_id' => $order->id]);
+        return false;
+    }
+
+    $message = 'Your order has been created successfully. We will process it shortly.';
+    $successUser = $this->notifyUser($order->user, new OrderStatusNotification($order, $message), [
+        'order_id' => $order->id
+    ]);
+
+    // Notify the pharmacist
+    $pharmacistId = $order->drug->created_by ?? null;
+    $successPharmacist = false;
+
+    if ($pharmacistId) {
+        $pharmacist = User::find($pharmacistId);
+        if ($pharmacist) {
+            $successPharmacist = $pharmacist->notify(
+                new OrderReviewMail($order)
+            );
+        }
+    }
+
+    return $successUser && $successPharmacist;
+}
+    public function sendPaymentConfirmationNotification(Order $order): bool
+    {
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
+            return false;
+        }
+
+        // Notify the user
+        $successUser = $this->notifyUser(
+            $order->user,
+            new PaymentConfirmationNotification($order),
+            [
                 'order_id' => $order->id
-            ]);
-            return false;
-        }
-    }
+            ]
+        );
 
-    public function sendPrescriptionApprovalNotification(Order $order, Prescription $prescription)
-    {
-        try {
-            // Notify user
-            $user = $order->user;
-            $user->notify(new PrescriptionApprovalNotification($order, $prescription, $order->refill_allowed));
+        // Notify the pharmacist
+        $pharmacistId = $order->drug->created_by ?? null;
+        $successPharmacist = false;
 
-            // Notify pharmacist
-            $pharmacist = User::where('id', $order->drug->created_by)->first();
+        if ($pharmacistId) {
+            $pharmacist = User::find($pharmacistId);
             if ($pharmacist) {
-                $pharmacist->notify(new PrescriptionApprovalNotification($order, $prescription, $order->refill_allowed));
+                $successPharmacist = $this->notifyUser(
+                    $pharmacist,
+                    new OrderStatusNotification($order, 'Payment has been received for your order.'),
+                    [
+                        'order_id' => $order->id,
+                        'pharmacist_id' => $pharmacist->id
+                    ]
+                );
             }
-
-            Log::info('Prescription approval notifications sent', [
-                'order_id' => $order->id,
-                'prescription_id' => $prescription->id,
-                'user_id' => $user->id,
-                'pharmacist_id' => $pharmacist ? $pharmacist->id : null,
-                'refill_allowed' => $order->refill_allowed,
-            ]);
-
-            return true;
-        } catch (\Exception $e) {
-            Log::error('Failed to send prescription approval notifications', [
-                'error' => $e->getMessage(),
-                'order_id' => $order->id,
-                'prescription_id' => $prescription->id
-            ]);
-            return false;
         }
+
+        return $successUser && $successPharmacist;
     }
 
-    public function sendPrescriptionRejectionNotification(Order $order, Prescription $prescription)
+    public function sendPrescriptionApprovalNotification(Order $order, Prescription $prescription, $refillAllowed = null): bool
     {
-        try {
-            $user = $order->user;
-            $user->notify(new PrescriptionRejectionNotification($order, $prescription, $order->refill_allowed));
-
-            Log::info('Prescription rejection notification sent', [
-                'order_id' => $order->id,
-                'prescription_id' => $prescription->id,
-                'user_id' => $user->id,
-                'refill_allowed' => $order->refill_allowed,
-            ]);
-
-            return true;
-        } catch (\Exception $e) {
-            Log::error('Failed to send prescription rejection notification', [
-                'error' => $e->getMessage(),
-                'order_id' => $order->id,
-                'prescription_id' => $prescription->id
-            ]);
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
             return false;
         }
+
+        // Notify the user
+        $successUser = $this->notifyUser(
+            $order->user,
+            new OrderStatusNotification($order, 'Your prescription has been approved. You can now proceed with payment.'),
+            [
+                'order_id' => $order->id,
+                'prescription_id' => $prescription->id,
+                'refill_allowed' => $refillAllowed ?? $order->refill_allowed
+            ]
+        );
+
+        // Notify the pharmacist
+        $pharmacistId = $order->drug->created_by ?? null;
+        $successPharmacist = false;
+
+        if ($pharmacistId) {
+            $pharmacist = User::find($pharmacistId);
+            if ($pharmacist) {
+                $successPharmacist = $this->notifyUser(
+                    $pharmacist,
+                    new OrderStatusNotification($order, 'A prescription has been approved. Payment is pending.'),
+                    [
+                        'order_id' => $order->id,
+                        'prescription_id' => $prescription->id,
+                        'pharmacist_id' => $pharmacist->id
+                    ]
+                );
+            }
+        }
+
+        return $successUser && $successPharmacist;
     }
 
-    public function sendOrderNotificationToPharmacist($order, $pharmacist)
+    public function sendPrescriptionRejectionNotification(Order $order, Prescription $prescription, $reason = null): bool
     {
-        $pharmacist->notify(new OrderStatusNotification("A new order has been placed for a drug you manage. Order ID: {$order->id}"));
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
+            return false;
+        }
+
+        // Notify the user
+        $successUser = $this->notifyUser(
+            $order->user,
+            new OrderStatusNotification($order, 'Your prescription has been rejected. Reason: ' . ($reason ?? 'Not specified')),
+            [
+                'order_id' => $order->id,
+                'prescription_id' => $prescription->id
+            ]
+        );
+
+        // Notify the pharmacist
+        $pharmacistId = $order->drug->created_by ?? null;
+        $successPharmacist = false;
+
+        if ($pharmacistId) {
+            $pharmacist = User::find($pharmacistId);
+            if ($pharmacist) {
+                $successPharmacist = $this->notifyUser(
+                    $pharmacist,
+                    new OrderStatusNotification($order, 'A prescription has been rejected. Reason: ' . ($reason ?? 'Not specified')),
+                    [
+                        'order_id' => $order->id,
+                        'prescription_id' => $prescription->id,
+                        'pharmacist_id' => $pharmacist->id
+                    ]
+                );
+            }
+        }
+
+        return $successUser && $successPharmacist;
+    }
+
+    public function sendOrderShippedNotification(Order $order): bool
+    {
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
+            return false;
+        }
+
+        $successUser = $this->notifyUser(
+            $order->user,
+            new OrderStatusNotification($order, 'Your order has been shipped. You will receive it soon.'),
+            [
+                'order_id' => $order->id
+            ]
+        );
+
+        $pharmacistId = $order->drug->created_by ?? null;
+        $successPharmacist = false;
+
+        if ($pharmacistId) {
+            $pharmacist = User::find($pharmacistId);
+            if ($pharmacist) {
+                $successPharmacist = $this->notifyUser(
+                    $pharmacist,
+                    new OrderStatusNotification($order, 'Your order has been shipped.'),
+                    [
+                        'order_id' => $order->id,
+                        'pharmacist_id' => $pharmacist->id
+                    ]
+                );
+            }
+        }
+
+        return $successUser && $successPharmacist;
+    }
+
+    public function sendOrderDeliveredNotification(Order $order): bool
+    {
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
+            return false;
+        }
+
+        $successUser = $this->notifyUser(
+            $order->user,
+            new OrderStatusNotification($order, 'Your order has been delivered successfully. Thank you for shopping with us!'),
+            [
+                'order_id' => $order->id
+            ]
+        );
+
+        $pharmacistId = $order->drug->created_by ?? null;
+        $successPharmacist = false;
+
+        if ($pharmacistId) {
+            $pharmacist = User::find($pharmacistId);
+            if ($pharmacist) {
+                $successPharmacist = $this->notifyUser(
+                    $pharmacist,
+                    new OrderStatusNotification($order, 'Your order has been successfully delivered.'),
+                    [
+                        'order_id' => $order->id,
+                        'pharmacist_id' => $pharmacist->id
+                    ]
+                );
+            }
+        }
+
+        return $successUser && $successPharmacist;
+    }
+
+    public function sendOrderCancelledNotification(Order $order, $reason = null): bool
+    {
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
+            return false;
+        }
+
+        $message = 'Your order has been cancelled. Reason: ' . ($reason ?? 'Not specified');
+        $successUser = $this->notifyUser(
+            $order->user,
+            new OrderStatusNotification($order, $message),
+            [
+                'order_id' => $order->id
+            ]
+        );
+
+        $pharmacistId = $order->drug->created_by ?? null;
+        $successPharmacist = false;
+
+        if ($pharmacistId) {
+            $pharmacist = User::find($pharmacistId);
+            if ($pharmacist) {
+                $successPharmacist = $this->notifyUser(
+                    $pharmacist,
+                    new OrderStatusNotification($order, 'An order has been cancelled. Reason: ' . ($reason ?? 'Not specified')),
+                    [
+                        'order_id' => $order->id,
+                        'pharmacist_id' => $pharmacist->id
+                    ]
+                );
+            }
+        }
+
+        return $successUser && $successPharmacist;
+    }
+
+    public function sendRefillReminderNotification(Order $order): bool
+    {
+        if (!$order->user) {
+            Log::warning('Order has no associated user', ['order_id' => $order->id]);
+            return false;
+        }
+
+        return $this->notifyUser(
+            $order->user,
+            new OrderStatusNotification($order, 'Your prescription is eligible for refill. Would you like to place a new order?'),
+            [
+                'order_id' => $order->id
+            ]
+        );
+    }
+
+    public function sendLowStockNotification(Drug $drug): bool
+    {
+        $pharmacistId = $drug->created_by ?? null;
+        if (!$pharmacistId) {
+            Log::warning('No pharmacist associated with drug', ['drug_id' => $drug->id]);
+            return false;
+        }
+
+        $pharmacist = User::find($pharmacistId);
+        if (!$pharmacist) {
+            Log::warning('Pharmacist not found', ['pharmacist_id' => $pharmacistId]);
+            return false;
+        }
+
+        return $this->notifyUser(
+            $pharmacist,
+            new OrderStatusNotification($drug, 'Low stock alert: ' . $drug->name . ' has low stock. Please restock soon.'),
+            [
+                'drug_id' => $drug->id,
+                'pharmacist_id' => $pharmacist->id
+            ]
+        );
     }
 }

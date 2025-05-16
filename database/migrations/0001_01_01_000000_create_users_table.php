@@ -10,10 +10,10 @@ return new class extends Migration
         Schema::create('users', function (Blueprint $table) {
             $table->id();
             $table->string('name');
+            $table->string('username')->unique();
             $table->string('email')->unique();
             $table->tinyInteger('is_role')->default(1)->comment('0: Admin, 1: Patient, 2: Pharmacist');
             $table->string('password')->nullable();
-            // $table->string('google_id')->nullable();
             $table->string('phone')->nullable(); 
             $table->string('address')->nullable(); 
             $table->decimal('lat', 10, 7)->nullable(); 

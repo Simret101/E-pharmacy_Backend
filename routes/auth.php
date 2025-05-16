@@ -38,6 +38,10 @@ Route::post('/resend_email_verification_link', [AuthController::class, 'resendEm
 Route::post('/forgot-password', [PasswordController::class, 'sendResetLink']);
 Route::get('/password/reset/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
 
+// Google Authentication Routes
+Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])->name('google.redirect');
+Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
+
 // Places Route
 Route::get('/user-locations', [PlaceController::class, 'userLocations']);
 Route::get('/app', function () {
@@ -57,7 +61,8 @@ Route::middleware(['auth'])->group(function () {
     // User Profile
     Route::put('/profile/update', [AuthController::class, 'updateProfile']);
     Route::get('/profile', [AuthController::class, 'profile']);
-
+    Route::resource('carts', CartController::class);
+    Route::post('carts/checkout', [CartController::class, 'checkout']);
     // Message Routes
     Route::post('/messages/send', [MessageController::class, 'sendMessage']);
     Route::get('/messages/conversation/{userId}', [MessageController::class, 'getConversationWithUser']);
@@ -73,8 +78,10 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
 
     // Image Routes
+    
     Route::post('/image', [ImageController::class, 'store']);
     Route::get('/image', [ImageController::class, 'show']);
+    Route::put('/image', [ImageController::class, 'update']);
     Route::delete('/image', [ImageController::class, 'destroy']);
 
     // Order Routes
@@ -95,7 +102,7 @@ Route::middleware(['auth'])->group(function () {
         Route::patch('/approve/{id}', [PharmacistController::class, 'approve']);
         Route::patch('/reject/{id}', [PharmacistController::class, 'reject']);
         Route::get('/admin/pharmacists', [PharmacistController::class, 'index']);
-        Route::get('/admin/pharmacists/all', [AdminController::class, 'getAllPharmacists']);
+ 
         Route::get('/admin/patients', [PatientController::class, 'getAllPatients']);
         Route::get('/admin/patients/{id}', [PatientController::class, 'show']);
         Route::put('/admin/patients/{id}', [PatientController::class, 'update']);
@@ -148,10 +155,14 @@ Route::middleware(['auth'])->group(function () {
 
 
 // Public Drug Routes
-Route::get('drugs', [DrugController::class, 'index']); 
+Route::get('drugs', [DrugController::class, 'index']);
+Route::get('drugs/category/{category}', [DrugController::class, 'getByCategory']);
 Route::get('drugs/{id}', [DrugController::class, 'show']);
-
-
+Route::get('drugs/created-by/{username}', [DrugController::class, 'getDrugsByCreator']);
+Route::get('/admin/pharmacists/all', [AdminController::class, 'getAllPharmacists']);
+Route::get('/pharmacists/{id}', [PharmacistController::class, 'show']);
+Route::get('/pharmacists/username/{username}', [PharmacistController::class, 'getByUsername']);
+Route::get('/patients/{id}', [PharmacistController::class, 'getPatient']);
 
 
 
