@@ -1,18 +1,10 @@
-# Use PHP CLI with required extensions
 FROM php:8.2-cli
 
-# Set working directory
 WORKDIR /var/www
 
-# Copy project files
 COPY . .
 
-# Install system dependencies and PHP extensions
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    zip \
-    unzip \
-    git \
+RUN apt-get update && apt-get install -y \
     libzip-dev \
     libcurl4-openssl-dev \ # Install cURL and OpenSSL support for PayPal
     && docker-php-ext-install pdo pdo_mysql bcmath zip curl \ # Install cURL extension
@@ -27,5 +19,5 @@ RUN composer install --no-dev --optimize-autoloader
 # Expose port
 EXPOSE 8000
 
-# Run migrations and start the Laravel server
-CMD ["sh", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"]
+# Run migrations, rollback if needed, then migrate
+CMD ["sh", "-c", "php artisan migrate:rollback --force && php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"]
