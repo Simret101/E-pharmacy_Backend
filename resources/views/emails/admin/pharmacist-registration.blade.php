@@ -12,7 +12,7 @@
             padding: 20px;
         }
         .header {
-            background-color: #4CAF50;
+            background-color: #4299E1;
             color: white;
             padding: 20px;
             text-align: center;
@@ -32,7 +32,7 @@
         }
         .button {
             display: inline-block;
-            background-color: #4CAF50;
+            background-color: #3182CE;
             color: white;
             padding: 10px 20px;
             text-decoration: none;
@@ -71,7 +71,7 @@
         }
         .verification-link {
             display: inline-block;
-            background-color: #FF9800;
+            background-color:  #2196F3;
             color: white;
             padding: 8px 15px;
             text-decoration: none;
@@ -167,20 +167,7 @@
             </a>
         </p>
 
-        <div class="action-form">
-            <h3>Take Action:</h3>
-            <form action="{{ url('/api/admin/pharmacists/' . $pharmacist->id . '/status') }}" method="POST">
-                @csrf
-                <textarea name="reason" placeholder="Enter reason for approval or rejection (optional)" rows="3"></textarea>
-                <div class="action-buttons">
-                    <button type="submit" name="action" value="approve" class="approve-button">
-                        Approve Registration
-                    </button>
-                    <button type="submit" name="action" value="reject" class="reject-button">
-                        Reject Registration
-                    </button>
-                </div>
-            </form>
+       
         </div>
         
         <p>Thank you for using our application!</p>

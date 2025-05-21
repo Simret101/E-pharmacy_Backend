@@ -3,7 +3,7 @@
 use Illuminate\Http\Request;
 
 use Illuminate\Support\Facades\Route;
-
+use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\GoogleAuthController;
 use App\Http\Controllers\Api\Auth\AuthController;
@@ -19,9 +19,15 @@ Route::get('/auth/google/callback', [\App\Http\Controllers\Api\Auth\GoogleAuthCo
 // Logout Route
 Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth:api');
 
-Route::get('/user', function (Request $request) {
+Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
-})->middleware('auth:sanctum');
+});
+
+// Chatbot routes
+Route::post('/chatbot/drug-info', [\App\Http\Controllers\Api\ChatbotController::class, 'getDrugInfo']);
+Route::get('/chatbot/history', [\App\Http\Controllers\Api\ChatbotController::class, 'getUserChatHistory']);
+Route::get('/chatbot/history/drug/{drug_name}', [\App\Http\Controllers\Api\ChatbotController::class, 'getDrugChatHistory']);
+Route::get('/chatbot/health', [\App\Http\Controllers\Api\ChatbotController::class, 'checkHealth']);
 
 // Cart Routes
 // Route::apiResource('carts', \App\Http\Controllers\Api\CartController::class);
@@ -35,7 +41,9 @@ Route::middleware('auth')->group(function () {
 
    
 });
-
+Route::patch('/prescriptions/{id}/approve', [OrderController::class, 'approvePrescription']);
+Route::patch('/prescriptions/{id}/reject', [OrderController::class, 'rejectPrescription']);
+Route::patch('/prescriptions/{id}/refill', [OrderController::class, 'updateRefill']);
 // Public routes
 //Route::get('/pharmacists', [AdminController::class, 'getAllPharmacists']);
 

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\PharmacistResource;
 use App\Models\Pharmacist;
 use App\Models\User;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
@@ -14,7 +15,12 @@ use Illuminate\Support\Facades\DB;
 
 class PharmacistController extends Controller
 {
-    
+    protected $notificationService;
+
+    public function __construct(NotificationService $notificationService)
+    {
+        $this->notificationService = $notificationService;
+    }
     public function index(Request $request)
     {
         $pharmacists = User::where('is_role', 2);  
@@ -134,32 +140,30 @@ class PharmacistController extends Controller
     
 
 
-  public function approve($id)
+    public function approve($id)
     {
         try {
-            $pharmacist = Pharmacist::find($id);
+            DB::beginTransaction();
+            
+            $user = User::findOrFail($id);
 
-            if (!$pharmacist) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Pharmacist not found'
+                    'message' => 'User not found'
                 ], 404);
             }
 
-            DB::beginTransaction();
-
-            // Update pharmacist status
-            $pharmacist->status = 'approved';
-            $pharmacist->status_reason = 'Documents verified';
-            $pharmacist->status_updated_at = now();
-            $pharmacist->save();
-
             // Update user status
-            $user = User::find($pharmacist->user_id);
-            if ($user) {
-                $user->status = 'approved';
-                $user->save();
-            }
+            $user->status = 'approved';
+            $user->save();
+
+            // Send notification
+            $this->notificationService->sendPharmacistRegistrationStatusNotification(
+                $user, 
+                'approved', 
+                'Your pharmacist registration has been approved.'
+            );
 
             DB::commit();
 
@@ -172,7 +176,7 @@ class PharmacistController extends Controller
             \Log::error('Error approving pharmacist: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Error approving pharmacist'
+                'message' => 'Error approving pharmacist: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -180,29 +184,27 @@ class PharmacistController extends Controller
     public function reject($id)
     {
         try {
-            $pharmacist = Pharmacist::find($id);
+            DB::beginTransaction();
+            
+            $user = User::findOrFail($id);
 
-            if (!$pharmacist) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Pharmacist not found'
+                    'message' => 'User not found'
                 ], 404);
             }
 
-            DB::beginTransaction();
-
-            // Update pharmacist status
-            $pharmacist->status = 'rejected';
-            $pharmacist->status_reason = 'Documents not verified';
-            $pharmacist->status_updated_at = now();
-            $pharmacist->save();
-
             // Update user status
-            $user = User::find($pharmacist->user_id);
-            if ($user) {
-                $user->status = 'rejected';
-                $user->save();
-            }
+            $user->status = 'rejected';
+            $user->save();
+
+            // Send notification
+            $this->notificationService->sendPharmacistRegistrationStatusNotification(
+                $user, 
+                'rejected', 
+                'Your pharmacist registration has been rejected.'
+            );
 
             DB::commit();
 
@@ -215,8 +217,9 @@ class PharmacistController extends Controller
             \Log::error('Error rejecting pharmacist: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Error rejecting pharmacist'
+                'message' => 'Error rejecting pharmacist: ' . $e->getMessage()
             ], 500);
         }
     }
+
 }

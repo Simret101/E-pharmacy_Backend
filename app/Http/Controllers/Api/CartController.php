@@ -24,6 +24,12 @@ use Illuminate\Support\Str;
 
 class CartController extends Controller
 {
+    protected $notificationService;
+
+    public function __construct(NotificationService $notificationService)
+    {
+        $this->notificationService = $notificationService;
+    }
    
 
     /**
@@ -237,75 +243,51 @@ class CartController extends Controller
      * Checkout cart items and create orders
      */
     public function checkout(Request $request)
-    {
-        try {
-            $user = Auth::user();
-            
-            $validator = Validator::make($request->all(), [
-                'prescription_image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
-                'cart_id' => 'required|integer|min:1'
-            ]);
+{
+    try {
+        $user = Auth::user();
+        
+        $validator = Validator::make($request->all(), [
+            'prescription_image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
+            'cart_id' => 'required|integer|min:1'
+        ]);
 
-            if ($validator->fails()) {
-                return response()->json(['errors' => $validator->errors()], 422);
-            }
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
 
-            DB::beginTransaction();
+        DB::beginTransaction();
 
-            // Upload the prescription image
-            $cloudinaryService = app()->make(CloudinaryService::class);
-            $imageResult = $cloudinaryService->uploadImage($request->file('prescription_image'), 'prescriptions');
+        // Upload the prescription image
+        $cloudinaryService = app()->make(CloudinaryService::class);
+        $imageResult = $cloudinaryService->uploadImage($request->file('prescription_image'), 'prescriptions');
 
-            // Generate hash from image content
-            $prescriptionImage = $request->file('prescription_image');
-            $imageContent = file_get_contents($prescriptionImage->getRealPath());
-            $imageHash = hash('sha256', $imageContent);
+        // Generate hash from image content
+        $prescriptionImage = $request->file('prescription_image');
+        $imageContent = file_get_contents($prescriptionImage->getRealPath());
+        $imageHash = hash('sha256', $imageContent);
 
-            // Log the generated prescription UID
-            \Log::info('Generated prescription UID:', ['prescription_uid' => $imageHash]);
+        // Log the generated prescription UID
+        \Log::info('Generated prescription UID:', ['prescription_uid' => $imageHash]);
 
-            // Check for duplicate prescription or refill eligibility
-            $existingOrder = Order::where('prescription_uid', $imageHash)
-                ->where('user_id', $user->id)
-                ->first();
+        // Check for duplicate prescription or refill eligibility
+        $existingOrder = Order::where('prescription_uid', $imageHash)
+            ->where('user_id', $user->id)
+            ->first();
 
-            if ($existingOrder) {
-                if ($existingOrder->refill_allowed <= 0) {
-                    return response()->json([
-                        'message' => 'This prescription image has already been submitted and cannot be reused.',
-                        'existing_order_id' => $existingOrder->id
-                    ], 409);
-                }
-
-                // Decrement the refill count
-                $existingOrder->refill_allowed -= 1;
-                $existingOrder->save();
-
-                // Clear the cart item
-                $cart = Cart::where('id', $request->cart_id)
-                    ->where('user_id', $user->id)
-                    ->with('drug')
-                    ->first();
-
-                if (!$cart) {
-                    return response()->json([
-                        'message' => 'Cart item not found',
-                        'error' => 'cart_item_not_found'
-                    ], 404);
-                }
-
-                $cart->delete();
-
-                DB::commit();
-
+        if ($existingOrder) {
+            if ($existingOrder->refill_allowed <= 0) {
                 return response()->json([
-                    'status' => 'success',
-                    'message' => 'Order created successfully using existing prescription',
-                    'data' => $existingOrder
-                ], 201);
+                    'message' => 'This prescription image has already been submitted and cannot be reused.',
+                    'existing_order_id' => $existingOrder->id
+                ], 409);
             }
 
-            // Get cart item and check stock
+            // Decrement the refill count
+            $existingOrder->refill_allowed -= 1;
+            $existingOrder->save();
+
+            // Clear the cart item
             $cart = Cart::where('id', $request->cart_id)
                 ->where('user_id', $user->id)
                 ->with('drug')
@@ -318,69 +300,99 @@ class CartController extends Controller
                 ], 404);
             }
 
-            if ($cart->drug->stock < $cart->quantity) {
-                return response()->json([
-                    'message' => "Insufficient stock for drug: {$cart->drug->name}",
-                    'error' => 'insufficient_stock'
-                ], 400);
-            }
-
-            // Calculate total amount
-            $totalAmount = $cart->drug->price * $cart->quantity;
-
-            // Create the order
-            $order = Order::create([
-                'user_id' => $user->id,
-                'drug_id' => $cart->drug_id,
-                'prescription_uid' => $imageHash,
-                'prescription_image' => $imageResult['secure_url'],
-                'quantity' => $cart->quantity,
-                'total_amount' => $totalAmount,
-                'status' => 'pending',
-            ]);
-
-
-
-            // Create inventory log
-            InventoryLog::create([
-                'drug_id' => $cart->drug_id,
-                'user_id' => Auth::id(),
-                'change_type' => 'sale',
-                'quantity_changed' => -$cart->quantity,
-                'reason' => 'Sale made through order'
-            ]);
-
-            // Reduce stock
-            $cart->drug->stock -= $cart->quantity;
-            $cart->drug->save();
-
-            // Send order created notification
-            $this->notificationService->sendOrderCreatedNotification($order);
-
-            // If it's a prescription order, send approval notification to pharmacist
-            if ($order->prescription_id) {
-                $prescription = $order->prescription;
-                $this->notificationService->sendPrescriptionApprovalNotification($order, $prescription);
-            }
-
-            // Clear the cart item
             $cart->delete();
 
             DB::commit();
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Order created successfully',
-                'data' => $order
+                'message' => 'Order created successfully using existing prescription',
+                'data' => $existingOrder
             ], 201);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Failed to create order',
-                'error' => $e->getMessage()
-            ], 500);
         }
+
+        // Get cart item and check stock
+        $cart = Cart::where('id', $request->cart_id)
+            ->where('user_id', $user->id)
+            ->with('drug')
+            ->first();
+
+        if (!$cart) {
+            return response()->json([
+                'message' => 'Cart item not found',
+                'error' => 'cart_item_not_found'
+            ], 404);
+        }
+
+        if ($cart->drug->stock < $cart->quantity) {
+            return response()->json([
+                'message' => "Insufficient stock for drug: {$cart->drug->name}",
+                'error' => 'insufficient_stock'
+            ], 400);
+        }
+
+        // Calculate total amount
+        $totalAmount = $cart->drug->price * $cart->quantity;
+
+        // Create the order with prescription data
+        $order = Order::create([
+            'user_id' => $user->id,
+            'drug_id' => $cart->drug_id,
+            'prescription_uid' => $imageHash,
+            'prescription_image' => $imageResult['secure_url'],
+            'quantity' => $cart->quantity,
+            'total_amount' => $totalAmount,
+            'status' => 'pending',
+            'prescription_status' => 'pending', // Add this field to track prescription status
+            'refill_allowed' => 0
+        ]);
+
+        // Create inventory log
+        InventoryLog::create([
+            'drug_id' => $cart->drug_id,
+            'user_id' => Auth::id(),
+            'change_type' => 'sale',
+            'quantity_changed' => -$cart->quantity,
+            'reason' => 'Sale made through order',
+            'order_id' => $order->id
+        ]);
+
+        // Reduce stock
+        $cart->drug->stock -= $cart->quantity;
+        $cart->drug->save();
+
+        // Send notifications
+        $this->notificationService->sendOrderCreatedNotification($user, $order, 'Your order has been created successfully. We will process it shortly.');
+
+        // Notify pharmacist about new order
+        $pharmacist = User::find($cart->drug->created_by);
+        if ($pharmacist) {
+            $this->notificationService->sendPrescriptionReviewNotification($pharmacist, $order, $order, 'A new prescription requires your review. Please check the details.');
+        }
+
+        // Clear the cart item
+        $cart->delete();
+
+        DB::commit();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Order created successfully',
+            'data' => $order
+        ], 201);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        \Log::error('Checkout failed:', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'user_id' => Auth::id(),
+            'cart_id' => $request->cart_id
+        ]);
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Failed to create order',
+            'error' => $e->getMessage()
+        ], 500);
     }
-}
+}}

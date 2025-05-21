@@ -24,14 +24,18 @@ use App\Http\Resources\PatientResource;
 use App\Services\AdminEmailService;
 use App\Customs\Services\CloudinaryService;
 use PHPOpenSourceSaver\JWTAuth\Facades\JWTAuth;
+use App\Services\NotificationService;
 
 class AuthController extends Controller
 {
     public function __construct(
         private EmailVerificationService $service,
         private AdminEmailService $adminEmailService,
-        private CloudinaryService $cloudinaryService
-    ) {}
+        private CloudinaryService $cloudinaryService,
+        private NotificationService $notificationService
+    ) {
+        $this->notificationService = $notificationService;
+    }
 
   
     public function register(RegistraationRequest $request)
@@ -101,6 +105,41 @@ class AuthController extends Controller
         }
 
         $user = Auth::user();
+        if ($user->is_role == 2) {
+            if ($user->status == 'pending') {
+                // Send pending status notification using notification service
+                $this->notificationService->sendPharmacistRegistrationStatusNotification(
+                    $user, 
+                    'pending', 
+                    'Your pharmacist registration is pending approval.'
+                );
+                return response()->json([
+                    'status' => 'failed', 
+                    'message' => 'Your license is not verified yet. Please wait for approval.',
+                    'data' => [
+                        'status' => 'pending',
+                        'message' => 'Your license is not verified yet. Please wait for approval.'
+                    ]
+                ], 403);
+            }
+    
+            if ($user->status == 'rejected') {
+                // Send rejected status notification using notification service
+                $this->notificationService->sendPharmacistRegistrationStatusNotification($user, 'rejected');
+                return response()->json([
+                    'status' => 'failed', 
+                    'message' => 'Your license has been declined. You are not allowed to log in.',
+                    'data' => [
+                        'status' => 'rejected',
+                        'message' => 'Your license has been declined. You are not allowed to log in.'
+                    ]
+                ], 403);
+            }
+        }
+    
+        if (!$user->email_verified_at) {
+            return response()->json(['status' => 'failed', 'message' => 'Please verify your email before logging in.'], 403);
+        }
 
         // Generate a refresh token
         $refreshToken = Hash::make(now());

@@ -11,7 +11,11 @@ use App\Notifications\PrescriptionRejectionNotification;
 use App\Notifications\PaymentConfirmationNotification;
 use App\Notifications\PrescriptionEmailApprovalNotification;
 use Illuminate\Support\Facades\Log;
-
+use App\Notifications\OrderCreatedNotification;
+use App\Notifications\PrescriptionReviewNotification;
+use App\Notifications\PrescriptionDecisionNotification;
+use App\Notifications\PharmacistRegistrationStatusNotification;
+use App\Notifications\PharmacistStatusNotification;
 class NotificationService
 {
     protected function notifyUser(User $user, $notification, array $context = []): bool
@@ -46,33 +50,7 @@ class NotificationService
         ]);
     }
 
-    public function sendOrderCreatedNotification(Order $order): bool
-{
-    if (!$order->user) {
-        Log::warning('Order has no associated user', ['order_id' => $order->id]);
-        return false;
-    }
-
-    $message = 'Your order has been created successfully. We will process it shortly.';
-    $successUser = $this->notifyUser($order->user, new OrderStatusNotification($order, $message), [
-        'order_id' => $order->id
-    ]);
-
-    // Notify the pharmacist
-    $pharmacistId = $order->drug->created_by ?? null;
-    $successPharmacist = false;
-
-    if ($pharmacistId) {
-        $pharmacist = User::find($pharmacistId);
-        if ($pharmacist) {
-            $successPharmacist = $pharmacist->notify(
-                new OrderReviewMail($order)
-            );
-        }
-    }
-
-    return $successUser && $successPharmacist;
-}
+  
     public function sendPaymentConfirmationNotification(Order $order): bool
     {
         if (!$order->user) {
@@ -108,6 +86,35 @@ class NotificationService
         }
 
         return $successUser && $successPharmacist;
+    }
+
+    /**
+     * Send notification to pharmacist about their registration status
+     * @param User $pharmacist
+     * @param string $status
+     * @return bool
+     */
+    // public function sendPharmacistRegistrationStatusNotification(User $pharmacist, string $status): bool
+    // {
+    //     if ($status === 'pending') {
+    //         $message = 'Your pharmacist registration is pending approval.';
+    //     } elseif ($status === 'rejected') {
+    //         $message = 'Your pharmacist registration has been declined.';
+    //     } else {
+    //         return false;
+    //     }
+
+    //     return $this->notifyUser($pharmacist, new PharmacistStatusNotification($pharmacist, $status), [
+    //         'user_id' => $pharmacist->id,
+    //         'status' => $status,
+    //         'message' => $message
+    //     ]);
+    // }
+    public function sendPharmacistRegistrationStatusNotification($user, $status)
+    {
+        $user->notify(new PharmacistRegistrationStatusNotification($status, $user));
+        // Send notification to the user
+        
     }
 
     public function sendPrescriptionApprovalNotification(Order $order, Prescription $prescription, $refillAllowed = null): bool
@@ -333,5 +340,37 @@ class NotificationService
                 'pharmacist_id' => $pharmacist->id
             ]
         );
+    }
+    public function sendOrderCreatedNotification($user, $order, $message)
+    {
+        try {
+            $user->notify(new OrderCreatedNotification($order, $message));
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Failed to send order created notification: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function sendPrescriptionReviewNotification($pharmacist, $order, $prescription, $message)
+    {
+        try {
+            $pharmacist->notify(new PrescriptionReviewNotification($order, $prescription, $message));
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Failed to send prescription review notification: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function sendPrescriptionDecisionNotification($user, $order, $status, $message)
+    {
+        try {
+            $user->notify(new PrescriptionDecisionNotification($order, $status, $message));
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Failed to send prescription decision notification: ' . $e->getMessage());
+            return false;
+        }
     }
 }

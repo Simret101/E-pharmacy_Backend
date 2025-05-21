@@ -7,6 +7,8 @@ use App\Models\Payment;
 use App\Models\Order;
 use App\Models\User;
 use App\Notifications\PaymentConfirmation;
+use App\Mail\PaymentNotification;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -49,14 +51,23 @@ class PaymentController extends Controller
             $order->save();
 
             // Get pharmacists to notify
-            $pharmacists = User::where('is_role', 1)->get();
+            $pharmacists = User::where('is_role', 2)->get();
 
-            // Send notifications
+            // Send email notifications to pharmacists
             foreach ($pharmacists as $pharmacist) {
-                $pharmacist->notify(new PaymentConfirmation($payment, 'pharmacist'));
+                Mail::to($pharmacist->email)->send(new PaymentNotification($order, $pharmacist));
             }
-            
-            Auth::user()->notify(new PaymentConfirmation($payment, 'patient'));
+
+            // Send email notification to user
+            Mail::to(Auth::user()->email)->send(new PaymentNotification($order, Auth::user()));
+
+            // Notify pharmacists via notification system
+            foreach ($pharmacists as $pharmacist) {
+                $pharmacist->notify(new PaymentConfirmation($order, $payment));
+            }
+
+            // Notify user via notification system
+            Auth::user()->notify(new PaymentConfirmation($order, $payment));
 
             DB::commit();
 

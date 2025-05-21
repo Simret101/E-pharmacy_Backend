@@ -14,207 +14,254 @@ use App\Customs\Services\CloudinaryService;
 use App\Models\OrderItem;
 use App\Models\Prescription;
 use App\Models\User;
+use App\Notifications\PrescriptionEmailApprovalNotification;
 use App\Notifications\OrderStatusNotification;
 use App\Notifications\PrescriptionApprovalNotification;
 use App\Notifications\PrescriptionRejectionNotification;
 use App\Notifications\OrderShippedNotification;
 use App\Notifications\OrderDeliveredNotification;
 use App\Notifications\OrderCancelledNotification;
+use App\Notifications\OrderReviewNotification;
 use App\Notifications\PharmacistOrderShippedNotification;
 use App\Notifications\PharmacistOrderDeliveredNotification;
 use App\Notifications\PharmacistOrderCancelledNotification;
 use App\Notifications\PharmacistPaymentReceivedNotification;
+use App\Services\PrescriptionNotificationService;
+use App\Mail\PrescriptionReviewMail;
+use App\Mail\PrescriptionDecisionMail;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
 use App\Services\NotificationService;
 
 class OrderController extends Controller
 {
-    protected $notificationService;
-
-    public function __construct(NotificationService $notificationService)
-    {
+    public function __construct(
+        private NotificationService $notificationService,
+        private PrescriptionNotificationService $prescriptionNotificationService
+    ) {
         $this->notificationService = $notificationService;
+         $this->prescriptionNotificationService = $prescriptionNotificationService;
     }
 
-    public function store(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'drug_id' => 'required|exists:drugs,id',
-            'quantity' => 'required|integer|min:1',
-            'prescription_image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
-        ]);
+   // In app/Http/Controllers/Api/OrderController.php
+   public function store(Request $request)
+   {
+       $validator = Validator::make($request->all(), [
+           'drug_id' => 'required|exists:drugs,id',
+           'quantity' => 'required|integer|min:1',
+           'prescription_image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
+           'refill_allowed' => 'nullable|integer|min:0'
+       ]);
+   
+       if ($validator->fails()) {
+           return response()->json(['errors' => $validator->errors()], 422);
+       }
+   
+       try {
+           DB::beginTransaction();
+   
+           // Upload the prescription image
+           $cloudinaryService = app()->make(\App\Customs\Services\CloudinaryService::class);
+           $imageResult = $cloudinaryService->uploadImage($request->file('prescription_image'), 'prescriptions');
+   
+           // Compute the hash of the image content
+           $prescriptionImage = $request->file('prescription_image');
+           $imageContent = file_get_contents($prescriptionImage->getRealPath());
+           $imageHash = hash('sha256', $imageContent);
+   
+           // Check for duplicate prescription or refill eligibility
+           $existingOrder = Order::where('prescription_uid', $imageHash)->first();
+           if ($existingOrder) {
+               if ($existingOrder->refill_allowed <= 0) {
+                   return response()->json(['message' => 'This prescription image has already been submitted and cannot be reused.'], 409);
+               } else {
+                   // Decrement the refill count
+                   $existingOrder->refill_allowed -= 1;
+                   $existingOrder->refill_used += 1;
+                   $existingOrder->save();
+                   return response()->json([
+                       'success' => true,
+                       'message' => 'Order created successfully using refill',
+                       'data' => new OrderResource($existingOrder)
+                   ]);
+               }
+           }
+   
+           $drug = Drug::findOrFail($request->drug_id);
+   
+           // Check if stock is less than 10
+           if ($drug->stock < 10) {
+               return response()->json([
+                   'success' => false,
+                   'message' => "Low stock alert: Only {$drug->stock} units of {$drug->name} available. Please contact the pharmacist.",
+                   'remaining_stock' => $drug->stock
+               ], 400);
+           }
+   
+           if ($drug->stock < $request->quantity) {
+               return response()->json(['message' => "Insufficient stock for drug: {$drug->name}"], 400);
+           }
+   
+           // Calculate total amount
+           $totalAmount = $drug->price * $request->quantity;
+   
+           // Create the order
+           $order = Order::create([
+               'user_id' => Auth::id(),
+               'drug_id' => $request->drug_id,
+               'prescription_uid' => $imageHash,
+               'prescription_image' => $imageResult['secure_url'],
+               'quantity' => $request->quantity,
+               'total_amount' => $totalAmount,
+               'status' => 'pending',
+               'prescription_status' => 'pending',
+               'refill_allowed' => $request->input('refill_allowed', 0),
+               'refill_used' => 0
+           ]);
+   
+           // Create inventory log
+           InventoryLog::create([
+               'drug_id' => $request->drug_id,
+               'user_id' => Auth::id(),
+               'change_type' => 'sale',
+               'quantity_changed' => -$request->quantity,
+               'reason' => 'Sale made through order',
+               'order_id' => $order->id
+           ]);
+   
+           // Reduce stock
+           $drug->stock -= $request->quantity;
+           $drug->save();
+   
+           // Send notifications
+           $user = Auth::user();
+           if ($user) {
+               $this->notificationService->sendOrderCreatedNotification($user, $order, 'Your order has been created successfully. We will process it shortly.');
+           }
+   
+           // Notify pharmacist about new order
+           $pharmacist = User::find($order->drug->created_by);
+           if ($pharmacist) {
+               $this->notificationService->sendPrescriptionReviewNotification($pharmacist, $order, $order, 'A new prescription requires your review. Please check the details.');
+           }
+   
+           DB::commit();
+   
+           return response()->json([
+               'success' => true,
+               'message' => 'Order created successfully',
+               'data' => new OrderResource($order)
+           ]);
+   
+       } catch (\Exception $e) {
+           DB::rollBack();
+           \Log::error('Error creating order: ' . $e->getMessage());
+           return response()->json([
+               'success' => false,
+               'message' => 'Error creating order: ' . $e->getMessage()
+           ], 500);
+       }
+   }
+public function getPharmacistOrderById($id)
+{
+    try {
+        $pharmacist = auth()->user();
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        // Get all drugs created by this pharmacist
+        $pharmacistDrugs = Drug::where('created_by', $pharmacist->id)->pluck('id');
 
-        try {
-            DB::beginTransaction();
+        // Get the specific order
+        $order = Order::with(['drug', 'prescription', 'user'])
+            ->whereIn('drug_id', $pharmacistDrugs)
+            ->where('id', $id)
+            ->first();
 
-            // Upload the prescription image
-            $cloudinaryService = app()->make(\App\Customs\Services\CloudinaryService::class);
-            $imageResult = $cloudinaryService->uploadImage($request->file('prescription_image'), 'prescriptions');
-
-            // Compute the hash of the image content
-            $prescriptionImage = $request->file('prescription_image');
-            $imageContent = file_get_contents($prescriptionImage->getRealPath());
-            $imageHash = hash('sha256', $imageContent);
-
-            // Log the generated prescription UID
-            \Log::info('Generated prescription UID:', ['prescription_uid' => $imageHash]);
-
-            // Check for duplicate prescription or refill eligibility
-            $existingOrder = Order::where('prescription_uid', $imageHash)->first();
-            if ($existingOrder) {
-                if ($existingOrder->refill_allowed <= 0) {
-                    return response()->json(['message' => 'This prescription image has already been submitted and cannot be reused.'], 409);
-                } else {
-                    // Decrement the refill count
-                    $existingOrder->refill_allowed -= 1;
-                    $existingOrder->save();
-                }
-            } else {
-                // Create a new order only if no existing order is found
-                $drug = Drug::findOrFail($request->drug_id);
-
-                if ($drug->stock < $request->quantity) {
-                    return response()->json(['message' => "Insufficient stock for drug: {$drug->name}"], 400);
-                }
-
-                // Calculate total amount
-                $totalAmount = $drug->price * $request->quantity;
-
-                // Create the order
-                $order = Order::create([
-                    'user_id' => Auth::id(),
-                    'drug_id' => $request->drug_id,
-                    'prescription_uid' => $imageHash, // Use the hash as the unique identifier
-                    'prescription_image' => $imageResult['secure_url'], // Path to the prescription image
-                    'quantity' => $request->quantity,
-                    'total_amount' => $totalAmount,
-                    'status' => 'pending',
-                ]);
-
-                // Reduce stock
-                $drug->stock -= $request->quantity;
-                $drug->save();
-
-                // Send order created notification to user and pharmacist
-                $user = Auth::user();
-                if ($user) {
-                    $user->notify((new OrderStatusNotification($order, 'Your order has been created successfully. We will process it shortly.'))->delay(now()->addSeconds(5)));
-                }
-
-                // Notify pharmacist about new order
-                $pharmacist = User::find($order->drug->created_by);
-                if ($pharmacist) {
-                    $pharmacist->notify((new OrderStatusNotification($order, 'A new order requires your review. Please check the prescription.'))->delay(now()->addSeconds(5)));
-                }
-
-                // If it's a prescription order, send approval notification to pharmacist
-                if ($order->prescription_uid) {
-                    $prescription = Prescription::where('prescription_uid', $order->prescription_uid)->first();
-                    if ($prescription) {
-                        DB::beginTransaction();
-                        try {
-                            // Notify pharmacist about new prescription review
-                            $pharmacist = User::find($order->drug->created_by);
-                            if ($pharmacist) {
-                                $pharmacist->notify((new PrescriptionEmailApprovalNotification($order, $prescription))->delay(now()->addSeconds(5)));
-                            }
-                            
-                            // Send the approval notification
-                            $user->notify((new PrescriptionApprovalNotification($order, $prescription, $order->refill_allowed))->delay(now()->addSeconds(5)));
-                            
-                            DB::commit();
-                        } catch (\Exception $e) {
-                            DB::rollBack();
-                            \Log::error('Error sending prescription notification: ' . $e->getMessage());
-                            throw $e;
-                        }
-                    }
-                }
-            }
-
-            DB::commit();
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Order created successfully',
-                'data' => $existingOrder ?? $order,
-            ], 201);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Failed to create order',
-                'error' => $e->getMessage(),
-            ], 500);
-        }
-    }
-
-    public function updatePrescriptionStatus(Request $request, $orderId)
-    {
-        $validator = Validator::make($request->all(), [
-            'prescription_status' => 'required|in:approved,rejected,pending', // Validate status
-            'refill_allowed' => 'nullable|integer|min:0', // Optional refill count
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $order = Order::find($orderId);
         if (!$order) {
-            return response()->json(['error' => 'Order not found'], 404);
-        }
-
-        // Update the prescription status
-        $order->prescription_status = $request->input('prescription_status');
-
-        // Update the refill count if provided
-        if ($request->has('refill_allowed')) {
-            $order->refill_allowed = $request->input('refill_allowed');
-        }
-
-        $order->save();
-
-        // Retrieve the prescription associated with the order
-        $prescription = Prescription::where('prescription_uid', $order->prescription_uid)->first();
-
-        // Send notifications based on the updated status
-        if ($order->prescription_status === 'approved') {
-            if ($prescription) {
-                // Notify user
-                $order->user->notify(new OrderStatusNotification($order, 'Your prescription has been approved. Your order will be processed shortly.'));
-                
-                // Notify pharmacist
-                $pharmacist = User::find($order->drug->created_by);
-                if ($pharmacist) {
-                    $pharmacist->notify(new OrderStatusNotification($order, 'A prescription has been approved. Payment is pending.'));
-                }
-            }
-        } elseif ($order->prescription_status === 'rejected') {
-            if ($prescription) {
-                // Notify user
-                $order->user->notify(new OrderStatusNotification($order, 'Your prescription has been rejected. Please contact customer support for more information.'));
-                
-                // Notify pharmacist
-                $pharmacist = User::find($order->drug->created_by);
-                if ($pharmacist) {
-                    $pharmacist->notify(new OrderStatusNotification($order, 'A prescription has been rejected.'));
-                }
-            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found or not accessible'
+            ], 404);
         }
 
         return response()->json([
-            'status' => 'success',
-            'message' => 'Prescription status updated successfully',
-            'data' => new OrderResource($order),
+            'success' => true,
+            'data' => $order,
+            'message' => 'Order retrieved successfully'
         ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to retrieve order: ' . $e->getMessage()
+        ], 500);
+    }
+}
+// Add this method to handle prescription decisions
+public function updatePrescriptionStatus(Request $request, $orderId)
+{
+    $validator = Validator::make($request->all(), [
+        'prescription_status' => 'required|in:approved,rejected,pending',
+        'refill_allowed' => 'nullable|integer|min:0'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 422);
     }
 
+    try {
+        DB::beginTransaction();
+
+        $order = Order::findOrFail($orderId);
+
+        // Update prescription status and refill count
+        $order->prescription_status = $request->prescription_status;
+        if ($request->has('refill_allowed')) {
+            $order->refill_allowed = $request->refill_allowed;
+        }
+
+        // Add logging
+        \Log::info('Prescription status update', [
+            'order_id' => $orderId,
+            'status' => $request->prescription_status,
+            'refill_allowed' => $request->refill_allowed ?? null
+        ]);
+
+        $order->save();
+
+        // Send notifications based on the decision
+        $user = $order->user;
+        if ($user) {
+            $message = match($order->prescription_status) {
+                'approved' => 'Your prescription has been approved. Your order will be processed shortly.',
+                'rejected' => 'Your prescription has been rejected. Please contact customer support for more information.',
+                'pending' => 'Your prescription is still under review.'
+            };
+
+            $this->notificationService->sendPrescriptionDecisionNotification($user, $order, $order->prescription_status, $message);
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Prescription status updated successfully',
+            'data' => new OrderResource($order)
+        ]);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        \Log::error('Prescription status update failed', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'order_id' => $orderId
+        ]);
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to update prescription status',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
     public function index(Request $request)
     {
         try {
@@ -283,6 +330,107 @@ class OrderController extends Controller
             ], 500);
         }
     }
+    public function getPharmacistOrders(Request $request)
+{
+    $user = auth()->user();
+
+    \Log::info('OrderController@getPharmacistOrders: Starting method', [
+        'user_id' => $user->id,
+        'role' => $user->is_role
+    ]);
+
+    if ($user->is_role !== 2) {
+        return response()->json(['message' => 'Only pharmacists can view their orders.'], 403);
+    }
+
+    try {
+        // Get drugs created by this pharmacist
+        $pharmacistDrugs = Drug::where('created_by', $user->id)->pluck('id');
+
+        $query = Order::with(['drug', 'prescription', 'user'])
+            ->whereIn('drug_id', $pharmacistDrugs);
+
+        // Apply search
+        if ($request->has('search')) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->whereHas('drug', function($drugQuery) use ($searchTerm) {
+                    $drugQuery->where('name', 'like', "%{$searchTerm}%")
+                            ->orWhere('description', 'like', "%{$searchTerm}%")
+                            ->orWhere('brand', 'like', "%{$searchTerm}%");
+                })
+                ->orWhere('prescription_uid', 'like', "%{$searchTerm}%");
+            });
+        }
+
+        // Apply filters
+        if ($request->has('prescription_status')) {
+            $query->where('prescription_status', $request->prescription_status);
+        }
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+        if ($request->has('start_date')) {
+            $query->whereDate('created_at', '>=', $request->start_date);
+        }
+        if ($request->has('end_date')) {
+            $query->whereDate('created_at', '<=', $request->end_date);
+        }
+
+        // Apply sorting
+        $sortBy = $request->sort_by ?? 'created_at';
+        $sortOrder = $request->sort_order ?? 'desc';
+        $query->orderBy($sortBy, $sortOrder);
+
+        // Paginate results
+        $perPage = $request->per_page ?? 10;
+        $orders = $query->paginate($perPage)->withQueryString();
+
+        if ($orders->isEmpty()) {
+            return response()->json([
+                'status' => 'success',
+                'message' => 'No orders found for this pharmacist',
+                'data' => []
+            ], 200);
+        }
+
+        // Calculate additional statistics
+        $totalRevenue = $orders->sum(function ($order) {
+            return $order->drug->price * $order->quantity;
+        });
+        $pendingOrders = $orders->where('status', 'pending')->count();
+        $completedOrders = $orders->where('status', 'completed')->count();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Orders retrieved successfully',
+            'data' => OrderResource::collection($orders),
+            'meta' => [
+                'current_page' => $orders->currentPage(),
+                'from' => $orders->firstItem(),
+                'last_page' => $orders->lastPage(),
+                'per_page' => $orders->perPage(),
+                'to' => $orders->lastItem(),
+                'total' => $orders->total(),
+                'total_revenue' => $totalRevenue,
+                'pending_orders' => $pendingOrders,
+                'completed_orders' => $completedOrders
+            ]
+        ], 200);
+
+    } catch (\Exception $e) {
+        \Log::error('OrderController@getPharmacistOrders: Error', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Error retrieving orders',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
 
     public function show($id)
     {
@@ -418,65 +566,151 @@ class OrderController extends Controller
     }
 
     public function userOrders(Request $request)
-    {
-        try {
-            $query = Order::with(['drug', 'prescription'])->where('user_id', Auth::id());
+{
+    try {
+        $user = auth()->user();
 
-            // Apply search
-            if ($request->has('search')) {
-                $searchTerm = $request->search;
-                $query->where(function ($q) use ($searchTerm) {
-                    $q->whereHas('drug', function($drugQuery) use ($searchTerm) {
-                        $drugQuery->where('name', 'like', "%{$searchTerm}%")
-                                ->orWhere('description', 'like', "%{$searchTerm}%")
-                                ->orWhere('brand', 'like', "%{$searchTerm}%");
-                    })
-                    ->orWhere('prescription_uid', 'like', "%{$searchTerm}%");
-                });
-            }
+        $query = Order::with(['drug', 'prescription', 'user'])
+            ->where('user_id', $user->id);
 
-            // Apply filters
-            if ($request->has('status')) {
-                $query->where('status', $request->status);
-            }
-            if ($request->has('start_date')) {
-                $query->whereDate('created_at', '>=', $request->start_date);
-            }
-            if ($request->has('end_date')) {
-                $query->whereDate('created_at', '<=', $request->end_date);
-            }
-
-            // Apply sorting
-            $sortBy = $request->sort_by ?? 'created_at';
-            $sortOrder = $request->sort_order ?? 'desc';
-            $query->orderBy($sortBy, $sortOrder);
-
-            // Paginate results
-            $perPage = $request->per_page ?? 10;
-            $orders = $query->paginate($perPage)->withQueryString();
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Orders retrieved successfully',
-                'data' => OrderResource::collection($orders),
-                'meta' => [
-                    'current_page' => $orders->currentPage(),
-                    'from' => $orders->firstItem(),
-                    'last_page' => $orders->lastPage(),
-                    'per_page' => $orders->perPage(),
-                    'to' => $orders->lastItem(),
-                    'total' => $orders->total(),
-                    'total_amount' => $orders->sum('total_amount'),
-                    'pending_count' => $orders->where('status', 'pending')->count(),
-                    'completed_count' => $orders->where('status', 'completed')->count()
-                ]
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Failed to retrieve orders',
-                'error' => $e->getMessage()
-            ], 500);
+        // Apply status filter
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
         }
+
+        // Apply search
+        if ($request->has('search')) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->whereHas('drug', function($drugQuery) use ($searchTerm) {
+                    $drugQuery->where('name', 'like', "%{$searchTerm}%")
+                            ->orWhere('description', 'like', "%{$searchTerm}%")
+                            ->orWhere('brand', 'like', "%{$searchTerm}%");
+                })
+                ->orWhere('prescription_uid', 'like', "%{$searchTerm}%");
+            });
+        }
+
+        // Apply date filters
+        if ($request->has('start_date')) {
+            $query->whereDate('created_at', '>=', $request->start_date);
+        }
+        if ($request->has('end_date')) {
+            $query->whereDate('created_at', '<=', $request->end_date);
+        }
+
+        // Apply sorting
+        $sortBy = $request->sort_by ?? 'created_at';
+        $sortDir = $request->sort_dir ?? 'desc';
+        $query->orderBy($sortBy, $sortDir);
+
+        // Pagination
+        $orders = $query->paginate(10);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $orders,
+            'meta' => [
+                'current_page' => $orders->currentPage(),
+                'from' => $orders->firstItem(),
+                'last_page' => $orders->lastPage(),
+                'per_page' => $orders->perPage(),
+                'to' => $orders->lastItem(),
+                'total' => $orders->total(),
+                'total_amount' => $orders->sum('total_amount'),
+                'pending_count' => $orders->where('status', 'pending')->count(),
+                'completed_count' => $orders->where('status', 'completed')->count()
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Failed to retrieve orders',
+            'error' => $e->getMessage()
+        ], 500);
     }
+}
+    public function approvePrescription(Request $request, $id)
+    {
+        $order = Order::findOrFail($id);
+        $user = $order->user;
+        
+        // Update prescription status
+        $order->prescription_status = 'approved';
+        $order->save();
+        
+        // Send notification
+        $this->prescriptionNotificationService->sendPrescriptionDecisionNotification(
+            $user,
+            $order,
+            'approved',
+            'Your prescription has been approved. Your order will be processed shortly.'
+        );
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Prescription approved successfully',
+            'data' => new OrderResource($order)
+        ]);
+    }
+public function rejectPrescription(Request $request, $id)
+{
+    $order = Order::findOrFail($id);
+    
+    // Update prescription status
+    $order->prescription_status = 'rejected';
+    $order->save();
+    
+    // Send notification to user
+    $user = $order->user;
+    if ($user) {
+        $this->notificationService->sendPrescriptionDecisionNotification(
+            $user,
+            $order,
+            'rejected',
+            'Your prescription has been rejected. Please contact customer support for more information.'
+        );
+    }
+    
+    return response()->json([
+        'success' => true,
+        'message' => 'Prescription rejected successfully',
+        'data' => new OrderResource($order)
+    ]);
+}
+
+public function updateRefill(Request $request, $id)
+{
+    $validator = Validator::make($request->all(), [
+        'refill_allowed' => 'required|integer|min:0'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 422);
+    }
+
+    $order = Order::findOrFail($id);
+    
+    // Update refill allowed count
+    $order->refill_allowed = $request->refill_allowed;
+    $order->save();
+    
+    // Send notification to user
+    $user = $order->user;
+    if ($user) {
+        $this->notificationService->sendPrescriptionDecisionNotification(
+            $user,
+            $order,
+            'refill_updated',
+            'Your prescription refill allowance has been updated.'
+        );
+    }
+    
+    return response()->json([
+        'success' => true,
+        'message' => 'Refill allowance updated successfully',
+        'data' => new OrderResource($order)
+    ]);
+}
 }

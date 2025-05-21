@@ -56,7 +56,59 @@ class MessageController extends Controller
             ], 500);
         }
     }
-
+    public function getAllChat(Request $request)
+    {
+        try {
+            $user = auth()->user();
+    
+            // Get all conversations where the user is either the sender or receiver
+            $conversations = Message::with(['sender', 'receiver'])
+                ->where(function ($query) use ($user) {
+                    $query->where('sender_id', $user->id)
+                        ->orWhere('receiver_id', $user->id);
+                })
+                ->orderBy('created_at', 'desc')
+                ->paginate(20);
+    
+            // Format conversations to show only the latest message from each conversation
+            $formattedConversations = [];
+            foreach ($conversations as $message) {
+                $otherUser = $message->sender_id == $user->id ? $message->receiver : $message->sender;
+                $conversationKey = $message->sender_id == $user->id ? $message->receiver_id : $message->sender_id;
+    
+                if (!isset($formattedConversations[$conversationKey])) {
+                    $formattedConversations[$conversationKey] = [
+                        'other_user' => $otherUser,
+                        'latest_message' => $message,
+                        'unread_count' => Message::where('receiver_id', $user->id)
+                            ->where('sender_id', $conversationKey)
+                            ->where('is_read', false)
+                            ->count()
+                    ];
+                }
+            }
+    
+            return response()->json([
+                'status' => 'success',
+                'data' => array_values($formattedConversations),
+                'meta' => [
+                    'current_page' => $conversations->currentPage(),
+                    'from' => $conversations->firstItem(),
+                    'last_page' => $conversations->lastPage(),
+                    'per_page' => $conversations->perPage(),
+                    'to' => $conversations->lastItem(),
+                    'total' => $conversations->total()
+                ]
+            ]);
+    
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve conversations',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
     public function getConversationWithUser($userId)
     {
         $authUserId = Auth::id();

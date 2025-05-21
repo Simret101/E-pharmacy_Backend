@@ -9,16 +9,19 @@ use App\Models\Payment;
 use App\Models\User;
 use App\Notifications\OrderPaidNotification;
 use App\Notifications\NewOrderNotification;
-
+use App\Mail\PaymentNotification;
+use Illuminate\Support\Facades\Mail;
+use App\Services\PaymentNotificationService;
 class PaymentController extends Controller
 {
     private $gateway;
 
-    public function __construct(){
+    public function __construct(PaymentNotificationService $paymentNotificationService){
         $this->gateway = Omnipay::create('PayPal_Rest');
         $this->gateway->setClientId(env('PAYPAL_CLIENT_ID'));
         $this->gateway->setSecret(env('PAYPAL_CLIENT_SECRET'));
         $this->gateway->setTestMode(true);
+        $this->paymentNotificationService = $paymentNotificationService;
     }
 
     public function pay(Request $request)
@@ -80,6 +83,35 @@ public function success(Request $request)
                     'payment_status' => $data['state'],
                     'order_id' => $order->id,
                 ]);
+                DB::beginTransaction();
+                try {
+                    // Update inventory for each item
+                    foreach ($order->items as $item) {
+                        $drug = Drug::findOrFail($item->drug_id);
+                        $previousStock = $drug->stock;
+                        
+                        // Update stock
+                        $drug->stock -= $item->quantity;
+                        $drug->save();
+                        
+                        // Create inventory log
+                        InventoryLog::create([
+                            'drug_id' => $drug->id,
+                            'user_id' => Auth::id(),
+                            'change_type' => 'sale',
+                            'quantity_changed' => -$item->quantity,
+                            'reason' => 'Order processed (Order ID: ' . $order->id . ')',
+                            'order_id' => $order->id
+                        ]);
+                    }
+                    
+                    DB::commit();
+                } catch (\Exception $e) {
+                    DB::rollBack();
+                    throw $e;
+                }
+
+                $this->paymentNotificationService->sendPaymentNotifications($order);
 
                 // Get order items to find pharmacist
                 $items = json_decode($order->items, true);
@@ -104,10 +136,14 @@ public function success(Request $request)
                           ->whereIn('id', $drugIds);
                 })->get();
 
-                // Send email to patient
-                $order->user->notify(new OrderPaidNotification($order, $payment));
+                // Send email notifications
+                Mail::to($order->user->email)->send(new PaymentNotification($order, $order->user));
+                foreach ($pharmacists as $pharmacist) {
+                    Mail::to($pharmacist->email)->send(new PaymentNotification($order, $pharmacist));
+                }
 
-                // Send email to each pharmacist
+                // Send notifications via notification system
+                $order->user->notify(new OrderPaidNotification($order, $payment));
                 foreach ($pharmacists as $pharmacist) {
                     $pharmacist->notify(new NewOrderNotification($order, $payment));
                 }

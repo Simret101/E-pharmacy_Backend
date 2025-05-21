@@ -3,7 +3,7 @@ use App\Http\Controllers\ChatController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\CartController;
-
+use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\DrugController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\Profile\PasswordController;
@@ -57,6 +57,17 @@ Route::middleware(['auth'])->group(function () {
         return $request->user();
     });
     Route::get('/verify-token', [AuthController::class, 'verifyAccessToken']);
+
+    // Chatbot routes
+    Route::post('/chatbot/drug-info', [ChatbotController::class, 'getDrugInfo']);
+    Route::get('/chatbot/history', [ChatbotController::class, 'getUserChatHistory']);
+    Route::get('/chatbot/history/drug/{drug_name}', [ChatbotController::class, 'getDrugChatHistory']);
+    Route::get('/chatbot/health', [ChatbotController::class, 'checkHealth']);
+    
+    // Order routes
+    Route::post('/orders/{id}/approve', [OrderController::class, 'approveOrder']);
+    Route::post('/orders/{id}/reject', [OrderController::class, 'rejectOrder']);
+    Route::post('/orders/{id}/process-payment', [OrderController::class, 'processPayment']);
     
     // User Profile
     Route::put('/profile/update', [AuthController::class, 'updateProfile']);
@@ -68,7 +79,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/messages/conversation/{userId}', [MessageController::class, 'getConversationWithUser']);
     Route::patch('/messages/{id}/read', [MessageController::class, 'markAsRead']);
     Route::delete('/messages/{id}', [MessageController::class, 'deleteMessage']);
-
+    Route::get('/messages', [MessageController::class, 'getAllChat']);
     // Payment Routes
     Route::post('/payments/process', [PaymentController::class, 'processPayment']);
 
@@ -142,8 +153,9 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/inventory/logs', [InventoryLogController::class, 'index']);
         Route::get('/low-stock/alerts', [DrugController::class, 'lowStockAlerts']);
         Route::patch('/drugs/{drug}/adjust-stock', [DrugController::class, 'adjustStock']);
-
+        Route::get('/pharmacist/orders/{id}', [OrderController::class, 'getPharmacistOrderById']);
         // Prescriptions
+        Route::get('/pharmacist/orders', [OrderController::class, 'getPharmacistOrders']);
         Route::post('/prescriptions/dispense/{uid}', [PrescriptionController::class, 'dispense']);
         
     });

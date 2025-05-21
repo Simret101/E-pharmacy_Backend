@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Carbon\Carbon;
-use PHPOpenSourceSaver\JWTAuth\JWTAuth;
+use PHPOpenSourceSaver\JWTAuth\Facades\JWTAuth;
 
 class GoogleAuthController extends Controller
 {
@@ -41,16 +41,34 @@ class GoogleAuthController extends Controller
                 ]);
             }
 
-            // Log the user in
-            Auth::login($user);
+            // Generate JWT tokens
+            $token = JWTAuth::fromUser($user);
+            $refreshToken = JWTAuth::fromUser($user, ['refresh_token' => true]);
 
-            // Redirect to home with success message
-            return redirect()->route('home')->with('success', 'Successfully logged in with Google');
+            // Prepare user data
+            $userData = [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->is_role,
+                'access_token' => $token,
+                'refresh_token' => $refreshToken,
+                'token_type' => 'Bearer',
+                'expires_in' => auth()->factory()->getTTL() * 60
+            ];
+
+            // Redirect to frontend with query parameters
+            $redirectUrl = 'https://e-pharacy.vercel.app/account/dashboard';
+            $query = http_build_query($userData);
+            
+            return redirect()->away("{$redirectUrl}?{$query}");
 
         } catch (\Exception $e) {
             \Log::error('Google OAuth Error: ' . $e->getMessage());
-            // Redirect back with error message instead of JSON response
-            return redirect()->back()->with('error', 'Authentication failed. Please try again.');
+            return redirect()->away('https://e-pharacy.vercel.app/account/dashboard')->with([
+                'error' => 'Authentication failed. Please try again.',
+                'message' => $e->getMessage()
+            ]);
         }
     }
 }

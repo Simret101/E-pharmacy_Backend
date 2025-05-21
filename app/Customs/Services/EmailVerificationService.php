@@ -20,7 +20,6 @@ class EmailVerificationService
         }
     }
 
-
     public function verifyEmail(string $email, string $token)
     {
         try {
@@ -28,10 +27,10 @@ class EmailVerificationService
 
             $user = User::where('email', $email)->first();
             if (!$user) {
-                return response()->json([
-                    'status' => 'failed',
+                return view('auth.email-verified', [
+                    'status' => 'error',
                     'message' => 'User not found'
-                ], 404);
+                ]);
             }
 
             $verificationToken = EmailVerificationToken::where('email', $email)
@@ -40,10 +39,10 @@ class EmailVerificationService
                 ->first();
 
             if (!$verificationToken) {
-                return response()->json([
-                    'status' => 'failed',
+                return view('auth.email-verified', [
+                    'status' => 'error',
                     'message' => 'Invalid or expired verification token'
-                ], 400);
+                ]);
             }
 
             $user->email_verified_at = now();
@@ -53,30 +52,33 @@ class EmailVerificationService
 
             DB::commit();
 
-            return response()->json([
+            return view('auth.email-verified', [
                 'status' => 'success',
                 'message' => 'Email verified successfully'
             ]);
+
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'status' => 'failed',
+            \Log::error('Email verification error: ' . $e->getMessage());
+            return view('auth.email-verified', [
+                'status' => 'error',
                 'message' => 'Error verifying email: ' . $e->getMessage()
-            ], 500);
+            ]);
         }
     }
+
     public function resendLink($email)
     {
         $user = User::where("email", $email)->first();
         if ($user) {
             $this->sendVerificationLink($user);
-            return response()->json([
+            return view('auth.email-verified', [
                 'status' => 'success',
                 'message' => 'Verification link sent successfully'
             ]);
         } else {
-            return response()->json([
-                'status' => 'failed',
+            return view('auth.email-verified', [
+                'status' => 'error',
                 'message' => 'User not found'
             ]);
         }

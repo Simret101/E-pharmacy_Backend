@@ -17,6 +17,9 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(UsernameGenerator::class, function ($app) {
             return new UsernameGenerator($app->make(User::class));
         });
+        $this->app->singleton(NotificationService::class, function ($app) {
+            return new NotificationService();
+        });
     }
 
     /**

@@ -8,7 +8,7 @@ use App\Http\Controllers\Api\AdminController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Api\PatientController;
-
+use App\Customs\Services\EmailVerificationService;
 
 
 
@@ -23,7 +23,10 @@ Route::get('/move',function(){
     event(new PersonMoved(40.7128, -74.0060));
     
 });
-
+Route::get('/verify-email/{token}', function ($token) {
+    $email = request()->query('email');
+    return app(EmailVerificationService::class)->verifyEmail($email, $token);
+});
 
 Route::get('/email/verify', function () {
     return view('email_verification');
@@ -78,11 +81,11 @@ Route::get('/pay/{orderId}', function ($orderId) {
 })->name('payment');
 
 // Admin Pharmacist Action Routes
-Route::get('/admin/pharmacists/{id}/action', [App\Http\Controllers\Api\AdminController::class, 'handlePharmacistAction'])
+Route::get('/admin/pharmacists/{id}/action', [AdminController::class, 'handleEmailAction'])
     ->name('admin.pharmacist.action')
     ->middleware(['auth', 'admin']);
 
 // Admin Dashboard Route
-Route::get('/admin/dashboard', [App\Http\Controllers\Api\AdminController::class, 'dashboard'])
+Route::get('/admin/dashboard', [AdminController::class, 'dashboard'])
     ->name('admin.dashboard')
     ->middleware(['auth', 'admin']);
