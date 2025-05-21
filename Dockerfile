@@ -21,4 +21,5 @@ RUN composer install --no-dev --optimize-autoloader
 EXPOSE 8000
 
 # Run migrations, rollback if needed, then migrate
-CMD ["sh", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"]
+CMD ["sh", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000 & php artisan queue:work"]
+
