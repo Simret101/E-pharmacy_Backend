@@ -352,15 +352,9 @@ class NotificationService
         }
     }
 
-    public function sendPrescriptionReviewNotification($pharmacist, $order, $prescription, $message)
+    public function sendPrescriptionReviewNotification(User $pharmacist, Order $order)
     {
-        try {
-            $pharmacist->notify(new PrescriptionReviewNotification($order, $prescription, $message));
-            return true;
-        } catch (\Exception $e) {
-            \Log::error('Failed to send prescription review notification: ' . $e->getMessage());
-            return false;
-        }
+        $pharmacist->notify(new PrescriptionReviewNotification($order));
     }
 
     public function sendPrescriptionDecisionNotification($user, $order, $status, $message)

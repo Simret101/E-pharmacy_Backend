@@ -152,14 +152,7 @@
     </form>
 </div>
 
-<div class="footer">
-    <p>If you're having trouble with the buttons above, copy and paste the following URLs into your browser:</p>
-    <p>
-        Approve: <a href="{{ url('/api/prescriptions/' . $orderId . '/approve') }}">{{ url('/api/prescriptions/' . $orderId . '/approve') }}</a><br>
-        Reject: <a href="{{ url('/api/prescriptions/' . $orderId . '/reject') }}">{{ url('/api/prescriptions/' . $orderId . '/reject') }}</a><br>
-        Update Refill: <a href="{{ url('/api/prescriptions/' . $orderId . '/refill') }}">{{ url('/api/prescriptions/' . $orderId . '/refill') }}</a>
-    </p>
-</div>
+
 <!-- ... rest of the template ... -->
 </body>
 </html>

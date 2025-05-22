@@ -1,11 +1,19 @@
 <?php
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
 class PasswordReset extends Model
 {
-    protected $fillable = ['email', 'token', 'created_at'];
+    protected $table = 'password_resets';
+    public $timestamps = false;
+    protected $fillable = ['email', 'token'];
 
-    public $timestamps = false;  
+    public function delete()
+    {
+        return $this->where('email', $this->email)
+                   ->where('token', $this->token)
+                   ->delete();
+    }
 }

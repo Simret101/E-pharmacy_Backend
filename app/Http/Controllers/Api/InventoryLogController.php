@@ -35,26 +35,16 @@ class InventoryLogController extends Controller
                     $query->where('drug_id', $request->drug_id);
                 })
                 ->latest()
-                ->paginate(10);
+                ->get(); 
 
             return response()->json([
                 'data' => $logs,
                 'meta' => [
-                    'current_page' => $logs->currentPage(),
-                    'from' => $logs->firstItem(),
-                    'last_page' => $logs->lastPage(),
-                    'per_page' => $logs->perPage(),
-                    'to' => $logs->lastItem(),
-                    'total' => $logs->total(),
+                    'total' => $logs->count(),
                     'total_amount' => $logs->sum('amount'),
                     'total_quantity' => $logs->sum('quantity')
                 ],
-                'links' => [
-                    'first' => $logs->url(1),
-                    'last' => $logs->url($logs->lastPage()),
-                    'prev' => $logs->previousPageUrl(),
-                    'next' => $logs->nextPageUrl(),
-                ]
+               
             ]);
 
         } catch (\Exception $e) {

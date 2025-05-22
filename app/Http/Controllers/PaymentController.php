@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
@@ -7,52 +6,62 @@ use Omnipay\Omnipay;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\User;
-use App\Notifications\OrderPaidNotification;
-use App\Notifications\NewOrderNotification;
-use App\Mail\PaymentNotification;
+use App\Models\Drug;
+use App\Models\InventoryLog;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use App\Mail\PaymentNotification;
+use App\Notifications\OrderPaidNotification;
+use App\Notifications\PharmacistOrderPaidNotification;
+use App\Notifications\NewOrderNotification;
 use App\Services\PaymentNotificationService;
+
 class PaymentController extends Controller
 {
     private $gateway;
+    private $paymentNotificationService;
 
-    public function __construct(PaymentNotificationService $paymentNotificationService){
+    public function __construct(PaymentNotificationService $paymentNotificationService)
+    {
         $this->gateway = Omnipay::create('PayPal_Rest');
-        $this->gateway->setClientId(env('PAYPAL_CLIENT_ID'));
-        $this->gateway->setSecret(env('PAYPAL_CLIENT_SECRET'));
+        $this->gateway->setClientId(config('services.paypal.client_id'));
+        $this->gateway->setSecret(config('services.paypal.secret'));
         $this->gateway->setTestMode(true);
+
         $this->paymentNotificationService = $paymentNotificationService;
     }
 
     public function pay(Request $request)
 {
+    // Validate the order ID only
+    $request->validate([
+        'order_id' => 'required|exists:orders,id',
+    ]);
+
+    // Retrieve the order using the ID
+    $order = Order::findOrFail($request->order_id);
+
     try {
-       
-        $request->validate([
-            'order_id' => 'required|exists:orders,id',
-        ]);
-
-        $order = Order::findOrFail($request->order_id);
-
+        // Use the amount from the database (trusted source)
         $response = $this->gateway->purchase([
-            'amount' => $order->total_amount,
-            'currency' => env("PAYPAL_CURRENCY"),
-            'returnUrl' => url('success?order_id=' . $order->id),
-            'cancelUrl' => url('error'),
+            'amount' => number_format($order->total_amount, 2, '.', ''), // Ensure proper format
+            'currency' => config('services.paypal.currency'),
+            'returnUrl' => route('payment.success', ['order_id' => $order->id]),
+            'cancelUrl' => route('payment.error'),
         ])->send();
 
         if ($response->isRedirect()) {
             return $response->redirect();
-        } else {
-            return $response->getMessage();
         }
 
-    } catch (\Throwable $th) {
-        return $th->getMessage();
+        return $response->getMessage();
+    } catch (\Throwable $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
     }
 }
 
-public function success(Request $request)
+    public function success(Request $request)
 {
     if ($request->input('paymentId') && $request->input('PayerID')) {
         try {
@@ -67,7 +76,7 @@ public function success(Request $request)
                 $data = $response->getData();
                 
                 $orderId = $request->input('order_id');
-                $order = Order::with(['user'])->findOrFail($orderId);
+                $order = Order::with(['user', 'drug'])->findOrFail($orderId);
 
                 // Update order status
                 $order->status = 'paid';
@@ -83,70 +92,16 @@ public function success(Request $request)
                     'payment_status' => $data['state'],
                     'order_id' => $order->id,
                 ]);
-                DB::beginTransaction();
-                try {
-                    // Update inventory for each item
-                    foreach ($order->items as $item) {
-                        $drug = Drug::findOrFail($item->drug_id);
-                        $previousStock = $drug->stock;
-                        
-                        // Update stock
-                        $drug->stock -= $item->quantity;
-                        $drug->save();
-                        
-                        // Create inventory log
-                        InventoryLog::create([
-                            'drug_id' => $drug->id,
-                            'user_id' => Auth::id(),
-                            'change_type' => 'sale',
-                            'quantity_changed' => -$item->quantity,
-                            'reason' => 'Order processed (Order ID: ' . $order->id . ')',
-                            'order_id' => $order->id
-                        ]);
-                    }
-                    
-                    DB::commit();
-                } catch (\Exception $e) {
-                    DB::rollBack();
-                    throw $e;
-                }
-
-                $this->paymentNotificationService->sendPaymentNotifications($order);
-
-                // Get order items to find pharmacist
-                $items = json_decode($order->items, true);
-                
-                // Check if items is null or not an array
-                if (!$items || !is_array($items)) {
-                    $items = [];
-                }
-                
-                // Get drug IDs from items
-                $drugIds = array_column($items, 'drug_id');
-                
-                // Filter out any null or invalid drug IDs
-                $drugIds = array_filter($drugIds, function($id) {
-                    return !empty($id) && is_numeric($id);
-                });
-                
-                // Get unique pharmacists for the drugs in the order
-                $pharmacists = User::whereIn('id', function($query) use ($drugIds) {
-                    $query->select('created_by')
-                          ->from('drugs')
-                          ->whereIn('id', $drugIds);
-                })->get();
-
-                // Send email notifications
-                Mail::to($order->user->email)->send(new PaymentNotification($order, $order->user));
-                foreach ($pharmacists as $pharmacist) {
-                    Mail::to($pharmacist->email)->send(new PaymentNotification($order, $pharmacist));
-                }
-
-                // Send notifications via notification system
+                // Notify the patient (who placed the order)
                 $order->user->notify(new OrderPaidNotification($order, $payment));
-                foreach ($pharmacists as $pharmacist) {
-                    $pharmacist->notify(new NewOrderNotification($order, $payment));
+
+                // Notify the pharmacist (creator of the drug)
+                $pharmacist = $order->drug->creator;
+
+                if ($pharmacist) {
+                    $pharmacist->notify(new PharmacistOrderPaidNotification($order, $payment));
                 }
+
 
                 return view('success', [
                     'order' => $order,
@@ -163,8 +118,4 @@ public function success(Request $request)
         return redirect()->route('payment.error')->with('error', 'Payment was declined or cancelled.');
     }
 }
-    
-        public function error(){
-        return "User declined the payment";
-    }
 }

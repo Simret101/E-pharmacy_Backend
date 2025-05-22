@@ -107,9 +107,9 @@
                                 Please keep this information for your records.
                             </p>
                             
-                            <a href="{{ url('/') }}" class="btn btn-outline-secondary">
+                            <!-- <a href="{{ url('/') }}" class="btn btn-outline-secondary">
                                 Return to Home
-                            </a>
+                            </a> -->
                         </div>
                     </div>
                 </div>

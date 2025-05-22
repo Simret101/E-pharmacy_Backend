@@ -256,7 +256,7 @@ class AuthController extends Controller
         }
     }
 
-    public function verifyUserEmail(VerifyEmailRequest $request)
+    public function verifyEmail(VerifyEmailRequest $request)
     {
         return $this->service->verifyEmail($request->email, $request->token);
     }

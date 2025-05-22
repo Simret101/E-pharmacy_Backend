@@ -22,9 +22,20 @@ use App\Http\Controllers\Api\InventoryLogController;
 use App\Http\Controllers\Api\PlaceController;
 use App\Http\Controllers\Api\NotificationController;
 
+// routes/api.php
+Route::post('/password/request-token', [PasswordController::class, 'requestOtp']);
+Route::post('/password/verify-token', [PasswordController::class, 'verifyOtp']);
+Route::post('/password/reset', [PasswordController::class, 'resetPassword']);
+
+
+
+// Route::post('/pay', [PaymentController::class, 'pay'])->name('payment.pay');
+// Route::get('/success', [PaymentController::class, 'success'])->name('payment.success');
+// Route::get('/error', [PaymentController::class, 'error'])->name('payment.error');
 
 Route::get('/verify-email/{token}', [AdminController::class, 'verifyEmail']);
 Route::match(['get', 'post'], '/admin/pharmacists/{id}/status', [AdminController::class, 'updatePharmacistStatus']);
+Route::get('/patients/{id}', [PatientController::class, 'getPatientById']);
 
 
 // Authentication Routes
@@ -35,9 +46,8 @@ Route::post('auth/verify_user_email', [AuthController::class, 'verifyUserEmail']
 Route::post('auth/resend_email_verification_link', [AuthController::class, 'resendEmailVerificationLink']);
 Route::post('/forgot-password', [PasswordController::class, 'sendResetLink']);
 Route::post('/resend_email_verification_link', [AuthController::class, 'resendEmailVerificationLink']);
-Route::post('/forgot-password', [PasswordController::class, 'sendResetLink']);
-Route::get('/password/reset/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
 
+Route::get('/auth/password/reset/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
 // Google Authentication Routes
 Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])->name('google.redirect');
 Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');

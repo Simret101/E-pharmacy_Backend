@@ -25,7 +25,27 @@ class PatientController extends Controller
             'pharmacists' => $pharmacists
         ]);
     }
-
+    public function getPatientById($id)
+    {
+        // Find patient directly with the condition
+        $patient = User::where('id', $id)
+                       ->where('is_role', 1)
+                       ->first();
+    
+        // If no patient is found
+        if (!$patient) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Patient not found',
+            ], 404);
+        }
+    
+        return response()->json([
+            'status' => 'success',
+            'data' => $patient,
+        ]);
+    }
+    
     public function getAllPatients(Request $request)
     {
         try {

@@ -238,70 +238,70 @@ class AdminController extends Controller
     }
 
     public function verifyEmail($token)
-    {
-        try {
-            $verification = DB::table('email_verification_tokens')
-                ->where('token', $token)
-                ->where('expired_at', '>', now())
-                ->first();
+{
+    try {
+        $verification = DB::table('email_verification_tokens')
+            ->where('token', $token)
+            ->where('expired_at', '>', now())
+            ->first();
 
-            if (!$verification) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid or expired verification token'
-                ], 400);
-            }
-
-            $user = User::where('email', $verification->email)->first();
-
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'User not found'
-                ], 404);
-            }
-
-            DB::beginTransaction();
-
-            try {
-                // Update user's email verification status
-                $user->email_verified_at = now();
-                $user->save();
-
-                // Delete the used token
-                DB::table('email_verification_tokens')
-                    ->where('token', $token)
-                    ->delete();
-
-                DB::commit();
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Email verified successfully. You can now log in to your account.',
-                    'data' => [
-                        'email' => $user->email,
-                        'verified_at' => $user->email_verified_at
-                    ]
-                ]);
-            } catch (\Exception $e) {
-                DB::rollBack();
-                \Log::error('Error verifying email: ' . $e->getMessage());
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Error verifying email',
-                    'error' => $e->getMessage()
-                ], 500);
-            }
-        } catch (\Exception $e) {
-            \Log::error('Error in verifyEmail: ' . $e->getMessage());
+        if (!$verification) {
             return response()->json([
                 'success' => false,
-                'message' => 'An error occurred',
+                'message' => 'Invalid or expired verification token'
+            ], 400);
+        }
+
+        $user = User::where('email', $verification->email)->first();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            // Update user's email verification status
+            $user->email_verified_at = now();
+            $user->save();
+
+            // Delete the used token
+            DB::table('email_verification_tokens')
+                ->where('token', $token)
+                ->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Email verified successfully',
+                'data' => [
+                    'email' => $user->email,
+                    'verified_at' => $user->email_verified_at
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Error verifying email: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error verifying email',
                 'error' => $e->getMessage()
             ], 500);
         }
+    } catch (\Exception $e) {
+        \Log::error('Error in verifyEmail: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'An error occurred',
+            'error' => $e->getMessage()
+        ], 500);
     }
-
+}
     public function handleEmailAction(Request $request, $id)
     {
         try {

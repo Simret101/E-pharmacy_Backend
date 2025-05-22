@@ -142,7 +142,7 @@ class OrderController extends Controller
            // Notify pharmacist about new order
            $pharmacist = User::find($order->drug->created_by);
            if ($pharmacist) {
-               $this->notificationService->sendPrescriptionReviewNotification($pharmacist, $order, $order, 'A new prescription requires your review. Please check the details.');
+               $this->notificationService->sendPrescriptionReviewNotification($pharmacist, $order, 'A new prescription requires your review. Please check the details.');
            }
    
            DB::commit();
@@ -211,7 +211,23 @@ public function updatePrescriptionStatus(Request $request, $orderId)
     try {
         DB::beginTransaction();
 
-        $order = Order::findOrFail($orderId);
+        $user = auth()->user();
+        if ($user->is_role !== 2) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only pharmacists can update prescription status'
+            ], 403);
+        }
+
+        $order = Order::with('drug')->findOrFail($orderId);
+        
+        // Check if the drug was created by this pharmacist
+        if ($order->drug->created_by !== $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You can only update prescriptions for drugs you created'
+            ], 403);
+        }
 
         // Update prescription status and refill count
         $order->prescription_status = $request->prescription_status;
@@ -364,11 +380,17 @@ public function updatePrescriptionStatus(Request $request, $orderId)
         }
 
         // Apply filters
+       
         if ($request->has('prescription_status')) {
             $query->where('prescription_status', $request->prescription_status);
         }
         if ($request->has('status')) {
             $query->where('status', $request->status);
+        }
+        if ($request->has('category_id')) {  // Add this
+            $query->whereHas('drug', function($q) use ($request) {
+                $q->where('category_id', $request->category_id);
+            });
         }
         if ($request->has('start_date')) {
             $query->whereDate('created_at', '>=', $request->start_date);
@@ -395,27 +417,27 @@ public function updatePrescriptionStatus(Request $request, $orderId)
         }
 
         // Calculate additional statistics
-        $totalRevenue = $orders->sum(function ($order) {
-            return $order->drug->price * $order->quantity;
+        $totalRevenue = $orders->filter(function ($order) {
+        return $order->status === 'paid';  // Only include paid orders
+        })->sum(function ($order) {
+        return $order->drug->price * $order->quantity;
         });
+
         $pendingOrders = $orders->where('status', 'pending')->count();
         $completedOrders = $orders->where('status', 'completed')->count();
+        $paidOrders = $orders->where('status', 'paid')->count();  // Add this
 
         return response()->json([
-            'status' => 'success',
-            'message' => 'Orders retrieved successfully',
-            'data' => OrderResource::collection($orders),
-            'meta' => [
-                'current_page' => $orders->currentPage(),
-                'from' => $orders->firstItem(),
-                'last_page' => $orders->lastPage(),
-                'per_page' => $orders->perPage(),
-                'to' => $orders->lastItem(),
-                'total' => $orders->total(),
-                'total_revenue' => $totalRevenue,
-                'pending_orders' => $pendingOrders,
-                'completed_orders' => $completedOrders
-            ]
+        'status' => 'success',
+        'message' => 'Orders retrieved successfully',
+        'data' => OrderResource::collection($orders),
+        'meta' => [
+            'total' => $orders->total(),
+            'total_revenue' => $totalRevenue,
+            'pending_orders' => $pendingOrders,
+            'completed_orders' => $completedOrders,
+            'paid_orders' => $paidOrders,  // Add this
+        ]
         ], 200);
 
     } catch (\Exception $e) {
