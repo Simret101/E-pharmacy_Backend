@@ -19,5 +19,5 @@ RUN composer install --no-dev --optimize-autoloader
 # Expose port
 EXPOSE 8000
 
-# Run migrations, schedule, and start services
-CMD ["sh", "-c", "php artisan migrate --force && php artisan schedule:run --no-interaction & php artisan serve --host=0.0.0.0 --port=8000 & php artisan queue:work"]
+# Run migrations first, then start services
+CMD ["sh", "-c", "php artisan migrate:fresh --force && php artisan cache:clear && php artisan config:clear && php artisan serve --host=0.0.0.0 --port=8000 & php artisan queue:work"]
