@@ -7,7 +7,8 @@ use App\Models\PasswordReset;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-
+use App\Http\Requests\ChangePasswordRequest;
+use Illuminate\Support\Facades\Auth;
 class PasswordController extends Controller
 {
     public function requestOtp(Request $request)
@@ -147,4 +148,41 @@ class PasswordController extends Controller
             ], 500);
         }
     }
+    public function changePassword(ChangePasswordRequest $request)
+{
+    try {
+        $user = Auth::user();
+        
+        if (!$user) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'User not authenticated'
+            ], 401);
+        }
+
+        // Verify current password
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Current password is incorrect'
+            ], 422);
+        }
+
+        // Update password
+        $user->password = Hash::make($request->password);
+        $user->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Password updated successfully'
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'failed',
+            'message' => 'Failed to update password',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
 }

@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-install pdo pdo_mysql bcmath zip curl \
     && rm -rf /var/lib/apt/lists/*
 
-
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
@@ -20,6 +19,5 @@ RUN composer install --no-dev --optimize-autoloader
 # Expose port
 EXPOSE 8000
 
-# Run migrations, rollback if needed, then migrate
-CMD ["sh", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000 & php artisan queue:work"]
-
+# Run migrations, schedule, and start services
+CMD ["sh", "-c", "php artisan migrate --force && php artisan schedule:run --no-interaction & php artisan serve --host=0.0.0.0 --port=8000 & php artisan queue:work"]

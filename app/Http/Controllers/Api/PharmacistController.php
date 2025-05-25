@@ -63,23 +63,45 @@ class PharmacistController extends Controller
     }
 
     public function getByUsername(Request $request, $username)
-    {
-        $pharmacist = User::where('username', $username)
-            ->where('is_role', 2)
-            ->first();
+{
+    $pharmacist = User::where('username', $username)
+        ->where('is_role', 2)
+        ->first();
 
-        if (!$pharmacist) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Pharmacist not found'
-            ], 404);
-        }
-
+    if (!$pharmacist) {
         return response()->json([
-            'status' => 'success',
-            'data' => $pharmacist
-        ]);
+            'status' => 'error',
+            'message' => 'Pharmacist not found'
+        ], 404);
     }
+
+    // Format the response to include all requested fields
+    $response = [
+        'status' => 'success',
+        'data' => [
+            'id' => $pharmacist->id,
+            'name' => $pharmacist->name,
+            'username' => $pharmacist->username,
+            'email' => $pharmacist->email,
+            'phone' => $pharmacist->phone,
+            'address' => $pharmacist->address,
+            'pharmacy_name' => $pharmacist->pharmacy_name,
+            'tin_number' => $pharmacist->tin_number,
+            'status' => $pharmacist->status,
+            'created_at' => $pharmacist->created_at,
+            'updated_at' => $pharmacist->updated_at,
+            'license_image' => $pharmacist->license_image,
+            'tin_image' => $pharmacist->tin_image,
+            'lat' => $pharmacist->lat,
+            'lng' => $pharmacist->lng,
+            'profile_image' => $pharmacist->profile_image,
+            'bank_name' => $pharmacist->bank_name,
+            'account_number' => $pharmacist->account_number
+        ]
+    ];
+
+    return response()->json($response);
+}
 
     public function getPatient(Request $request, $patientId)
     {

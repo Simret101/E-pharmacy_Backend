@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api;
 
+use Illuminate\Support\Facades\Mail;
+use App\Mail\LowStockAlertMail;
 use App\Http\Controllers\Controller;
 use App\Models\Drug;
 use App\Http\Resources\DrugResource;
@@ -11,6 +13,7 @@ use Illuminate\Support\Facades\Validator;
 use App\Customs\Services\CloudinaryService;
 use Illuminate\Support\Facades\DB;
 use App\Models\InventoryLog;
+use Illuminate\Support\Facades\Log;
 
 class DrugController extends Controller
 {
@@ -443,18 +446,29 @@ public function getDrugsByCreator(Request $request, $username)
         $query->orderBy($sortBy, $sortOrder);
 
         // Paginate results
-        
+        $perPage = $request->per_page ?? 10;
+        $drugs = $query->paginate($perPage)->withQueryString();
 
         return response()->json([
             'status' => 'success',
             'message' => 'Drugs retrieved successfully',
             'data' => DrugResource::collection($drugs),
             'meta' => [
+                'current_page' => $drugs->currentPage(),
+                'from' => $drugs->firstItem(),
+                'last_page' => $drugs->lastPage(),
+                'per_page' => $drugs->perPage(),
+                'to' => $drugs->lastItem(),
                 'total' => $drugs->total(),
                 'total_stock' => $drugs->sum('stock'),
                 'low_stock_count' => $drugs->where('stock', '<', 10)->count()
             ],
-            
+            'links' => [
+                'first' => $drugs->url(1),
+                'last' => $drugs->url($drugs->lastPage()),
+                'prev' => $drugs->previousPageUrl(),
+                'next' => $drugs->nextPageUrl()
+            ]
         ], 200);
     } catch (\Exception $e) {
         return response()->json([
@@ -573,107 +587,113 @@ public function getByCategory(Request $request, $category)
     }
 
     public function getMyDrugs(Request $request)
-{
-    $user = Auth::user();
+    {
+        $user = Auth::user();
 
-    \Log::info('DrugController@getMyDrugs: Starting method', [
-        'user_id' => $user->id,
-        'role' => $user->is_role
-    ]);
+        \Log::info('DrugController@getMyDrugs: Starting method', [
+            'user_id' => $user->id,
+            'role' => $user->is_role
+        ]);
 
-    if ($user->is_role !== 2) {
-        return response()->json(['message' => 'Only pharmacists can view their drugs.'], 403);
-    }
-
-    try {
-        $query = Drug::where('created_by', $user->id);
-
-        // Apply search
-        if ($request->has('search')) {
-            $searchTerm = $request->search;
-            $query->where(function ($q) use ($searchTerm) {
-                $q->where('name', 'like', "%{$searchTerm}%")
-                  ->orWhere('description', 'like', "%{$searchTerm}%")
-                  ->orWhere('brand', 'like', "%{$searchTerm}%");
-            });
+        if ($user->is_role !== 2) {
+            return response()->json(['message' => 'Only pharmacists can view their drugs.'], 403);
         }
 
-        // Apply sorting
-        $sortBy = $request->sort_by ?? 'created_at';
-        $sortOrder = $request->sort_order ?? 'desc';
-        $query->orderBy($sortBy, $sortOrder);
+        try {
+            $query = Drug::where('created_by', $user->id);
 
-        // Get all results
-        $drugs = $query->get();
+            // Apply search
+            if ($request->has('search')) {
+                $searchTerm = $request->search;
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->where('name', 'like', "%{$searchTerm}%")
+                      ->orWhere('description', 'like', "%{$searchTerm}%")
+                      ->orWhere('brand', 'like', "%{$searchTerm}%");
+                });
+            }
 
-        if ($drugs->isEmpty()) {
+            // Apply sorting
+            $sortBy = $request->sort_by ?? 'created_at';
+            $sortOrder = $request->sort_order ?? 'desc';
+            $query->orderBy($sortBy, $sortOrder);
+
+            // Paginate results
+            $perPage = $request->per_page ?? 10;
+            $drugs = $query->paginate($perPage)->withQueryString();
+
+            if ($drugs->isEmpty()) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'No drugs found for this user',
+                    'data' => []
+                ], 200);
+            }
+
             return response()->json([
                 'status' => 'success',
-                'message' => 'No drugs found for this user',
-                'data' => []
+                'message' => 'Drugs retrieved successfully',
+                'data' => DrugResource::collection($drugs),
+                'meta' => [
+                    'current_page' => $drugs->currentPage(),
+                    'from' => $drugs->firstItem(),
+                    'last_page' => $drugs->lastPage(),
+                    'per_page' => $drugs->perPage(),
+                    'to' => $drugs->lastItem(),
+                    'total' => $drugs->total(),
+                    'total_stock' => $drugs->sum('stock'),
+                    'low_stock_count' => $drugs->where('stock', '<', 10)->count()
+                ]
             ], 200);
-        }
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Drugs retrieved successfully',
-            'data' => DrugResource::collection($drugs),
-            'meta' => [
-                'total' => $drugs->count(),
-                'total_stock' => $drugs->sum('stock'),
-                'low_stock_count' => $drugs->where('stock', '<', 10)->count()
-            ]
-        ], 200);
-    } catch (\Exception $e) {
-        \Log::error('DrugController@getMyDrugs: Error', [
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ]);
-        
-        return response()->json([
-            'status' => 'error',
-            'message' => 'Error retrieving drugs',
-            'error' => $e->getMessage()
-        ], 500);
-    }
-}
-    public function lowStockAlerts()
-    {
-        $lowStockDrugs = Drug::where('stock', '<', 10)->get(); 
-
-        if ($lowStockDrugs->isEmpty()) {
+        } catch (\Exception $e) {
+            \Log::error('DrugController@getMyDrugs: Error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
-                'message' => 'No low stock drugs found.',
-                'data' => []
-            ], 200);
+                'status' => 'error',
+                'message' => 'Error retrieving drugs',
+                'error' => $e->getMessage()
+            ], 500);
         }
+    }
 
-        foreach ($lowStockDrugs as $drug) {
-            $pharmacist = $drug->creator;
-            if ($pharmacist) {
-                try {
-                    $pharmacist->notify(new \App\Notifications\LowStockAlertNotification($drug));
-                    \Log::info('Low stock notification sent to pharmacist', [
-                        'pharmacist_id' => $pharmacist->id,
-                        'drug_id' => $drug->id,
-                        'stock' => $drug->stock
-                    ]);
-                } catch (\Exception $e) {
-                    \Log::error('Failed to send low stock notification', [
-                        'pharmacist_id' => $pharmacist->id,
-                        'drug_id' => $drug->id,
-                        'error' => $e->getMessage()
-                    ]);
-                }
+    public function lowStockAlerts()
+{
+    $lowStockDrugs = Drug::where('stock', '<', 10)->get(); 
+
+    if ($lowStockDrugs->isEmpty()) {
+        return response()->json([
+            'message' => 'No low stock drugs found.',
+            'data' => []
+        ], 200);
+    }
+
+    foreach ($lowStockDrugs as $drug) {
+        $pharmacist = $drug->creator;
+        if ($pharmacist) {
+            try {
+                $pharmacist->notify(new \App\Notifications\LowStockAlertNotification($drug));
+                \Log::info('Low stock notification sent to pharmacist', [
+                    'pharmacist_id' => $pharmacist->id,
+                    'drug_id' => $drug->id,
+                    'stock' => $drug->stock
+                ]);
+            } catch (\Exception $e) {
+                \Log::error('Failed to send low stock notification', [
+                    'pharmacist_id' => $pharmacist->id,
+                    'drug_id' => $drug->id,
+                    'error' => $e->getMessage()
+                ]);
             }
         }
-
-        return response()->json([
-            'message' => 'Low stock notifications sent successfully',
-            'data' => DrugResource::collection($lowStockDrugs)
-        ]);
     }
 
+    return response()->json([
+        'message' => 'Low stock notifications sent successfully',
+        'data' => DrugResource::collection($lowStockDrugs)
+    ]);
+}
     public function adjustStock(Request $request, $id)
     {
         if (Auth::user()->is_role !== 2) {

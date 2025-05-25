@@ -27,7 +27,10 @@ Route::post('/password/request-token', [PasswordController::class, 'requestOtp']
 Route::post('/password/verify-token', [PasswordController::class, 'verifyOtp']);
 Route::post('/password/reset', [PasswordController::class, 'resetPassword']);
 
-
+// routes/auth.php
+// Route::post('/password/email', [PasswordController::class, 'sendResetLink']);
+// Route::post('/password/reset', [PasswordController::class, 'resetPassword'])->name('password.update');
+// Route::get('/password/reset/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
 
 // Route::post('/pay', [PaymentController::class, 'pay'])->name('payment.pay');
 // Route::get('/success', [PaymentController::class, 'success'])->name('payment.success');
@@ -46,11 +49,12 @@ Route::post('auth/verify_user_email', [AuthController::class, 'verifyUserEmail']
 Route::post('auth/resend_email_verification_link', [AuthController::class, 'resendEmailVerificationLink']);
 Route::post('/forgot-password', [PasswordController::class, 'sendResetLink']);
 Route::post('/resend_email_verification_link', [AuthController::class, 'resendEmailVerificationLink']);
-
-Route::get('/auth/password/reset/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
+Route::get('/password/reset/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
+// Route::get('/auth/password/reset/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
 // Google Authentication Routes
-Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])->name('google.redirect');
-Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
+Route::get('/auth/google/{role}/redirect', [GoogleAuthController::class, 'redirect']);
+Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback']);
+
 
 // Places Route
 Route::get('/user-locations', [PlaceController::class, 'userLocations']);
@@ -67,7 +71,7 @@ Route::middleware(['auth'])->group(function () {
         return $request->user();
     });
     Route::get('/verify-token', [AuthController::class, 'verifyAccessToken']);
-
+    Route::put('/password/change', [PasswordController::class, 'changePassword']);
     // Chatbot routes
     Route::post('/chatbot/drug-info', [ChatbotController::class, 'getDrugInfo']);
     Route::get('/chatbot/history', [ChatbotController::class, 'getUserChatHistory']);

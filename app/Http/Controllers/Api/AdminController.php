@@ -238,70 +238,46 @@ class AdminController extends Controller
     }
 
     public function verifyEmail($token)
-{
-    try {
-        $verification = DB::table('email_verification_tokens')
-            ->where('token', $token)
-            ->where('expired_at', '>', now())
-            ->first();
-
-        if (!$verification) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid or expired verification token'
-            ], 400);
-        }
-
-        $user = User::where('email', $verification->email)->first();
-
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not found'
-            ], 404);
-        }
-
-        DB::beginTransaction();
-
+    {
         try {
+            DB::beginTransaction();
+            
+            // Verify token exists and is not expired
+            $verificationToken = DB::table('email_verification_tokens')
+                ->where('token', $token)
+                ->where('expired_at', '>', now())
+                ->first();
+                
+            if (!$verificationToken) {
+                return redirect()->route('email-verified')->with('error', 'Invalid or expired verification token');
+            }
+    
+            // Find user with matching email
+            $user = User::where('email', $verificationToken->email)->first();
+            
+            if (!$user) {
+                return redirect()->route('email-verified')->with('error', 'User not found');
+            }
+    
             // Update user's email verification status
             $user->email_verified_at = now();
             $user->save();
-
+    
             // Delete the used token
             DB::table('email_verification_tokens')
                 ->where('token', $token)
                 ->delete();
-
+    
             DB::commit();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Email verified successfully',
-                'data' => [
-                    'email' => $user->email,
-                    'verified_at' => $user->email_verified_at
-                ]
-            ]);
-
+    
+            return redirect()->route('email-verified')->with('success', 'Email verified successfully');
+    
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::error('Error verifying email: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Error verifying email',
-                'error' => $e->getMessage()
-            ], 500);
+            return redirect()->route('email-verified')->with('error', 'Error verifying email');
         }
-    } catch (\Exception $e) {
-        \Log::error('Error in verifyEmail: ' . $e->getMessage());
-        return response()->json([
-            'success' => false,
-            'message' => 'An error occurred',
-            'error' => $e->getMessage()
-        ], 500);
     }
-}
     public function handleEmailAction(Request $request, $id)
     {
         try {

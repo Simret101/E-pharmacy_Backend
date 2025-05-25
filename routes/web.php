@@ -39,15 +39,18 @@ Route::get('/email/verification-failed', function () {
 //     return view('forgot_password');
 // })->name('password.request');
 
-Route::get('/email/verified', function () {
-    return view('auth.verified');
-})->name('verification.success');
-Route::get('/password/reset/', function () {
-    return view('emails.password_reset');
-})->name('password.request');
+// Route::get('/email/verified', function () {
+//     return view('auth.verified');
+// })->name('verification.success');
+// Route::get('/password/reset/', function () {
+//     return view('emails.password-reset');
+// })->name('password.request');
 
 
 
+Route::get('/email-verified', function() {
+    return view('auth.email-verified-success');
+})->name('email-verified');
 
 
 // Home Route
@@ -89,3 +92,13 @@ Route::get('/admin/pharmacists/{id}/action', [AdminController::class, 'handleEma
 Route::get('/admin/dashboard', [AdminController::class, 'dashboard'])
     ->name('admin.dashboard')
     ->middleware(['auth', 'admin']);
+
+
+// Route::post('/chapa/callback', [PaymentController::class, 'chapaCallback'])->name('chapa.callback');
+// Route::get('/chapa/success/{order_id}', [PaymentController::class, 'chapaSuccess'])->name('chapa.success');
+// Route::get('/chapa/init/{orderId}', [PaymentController::class, 'showPaymentForm'])->name('chapa.init');
+// Route::post('/chapa/init/{orderId}', [PaymentController::class, 'chapaPay'])->name('chapa.pay');
+
+Route::get('/chapa/pay/{orderId}', [PaymentController::class, 'showPaymentForm'])->name('chapa.init');
+Route::post('/chapa/pay', [PaymentController::class, 'chapaPay'])->name('chapa.pay');
+Route::get('/chapa/success/{order_id}', [PaymentController::class, 'chapaSuccess'])->name('chapa.success');

@@ -8,11 +8,11 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use App\Models\Drug;
 
-class LowStockAlertNotification extends Notification implements ShouldQueue
+class LowStockAlertNotification extends Notification
 {
     use Queueable;
 
-    protected $drug;
+    public $drug;
 
     public function __construct(Drug $drug)
     {
@@ -21,20 +21,17 @@ class LowStockAlertNotification extends Notification implements ShouldQueue
 
     public function via($notifiable)
     {
-        return ['mail', 'database'];
+        return ['database']; // You can also add 'mail' if you want email too
     }
 
-    public function toMail($notifiable)
+    public function toDatabase($notifiable)
     {
-        return (new MailMessage)
-            ->subject('Low Stock Alert: ' . $this->drug->name)
-            ->greeting('Hello ' . $notifiable->name . ',')
-            ->line('This is a low stock alert for one of your drugs:')
-            ->line('Drug: ' . $this->drug->name)
-            ->line('Current Stock: ' . $this->drug->stock)
-            ->line('Please restock as soon as possible to avoid running out.')
-            ->action('Manage Inventory', url('/pharmacist/drugs'))
-            ->line('Thank you for using our application!');
+        return [
+            'drug_id' => $this->drug->id,
+            'drug_name' => $this->drug->name,
+            'stock' => $this->drug->stock,
+            'message' => 'The drug ' . $this->drug->name . ' is running low in stock.'
+        ];
     }
 
     public function toArray($notifiable)
@@ -43,8 +40,7 @@ class LowStockAlertNotification extends Notification implements ShouldQueue
             'drug_id' => $this->drug->id,
             'drug_name' => $this->drug->name,
             'stock' => $this->drug->stock,
-            'message' => 'Low stock alert for ' . $this->drug->name,
-            'type' => 'low_stock_alert'
+            'message' => 'The drug ' . $this->drug->name . ' is running low in stock.'
         ];
     }
-} 
+}
