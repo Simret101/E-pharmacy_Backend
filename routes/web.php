@@ -9,9 +9,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Api\PatientController;
 use App\Customs\Services\EmailVerificationService;
+use App\Http\Controllers\Api\Auth\PasswordResetController;
+use App\Http\Controllers\GoogleAuthController;
 
 
-
+// In routes/web.php
+// Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])->name('google.redirect');
+// Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
 Route::get('/', function () {
     return view('welcome');
 });
@@ -58,6 +62,20 @@ Route::get('/', function () {
     return view('welcome');
 })->name('home');
 
+// Route::post('/password/reset-link', [PasswordResetController::class, 'sendResetLink'])->name('api.password.reset.link');
+// Route::get('/password/reset/{token}', [PasswordResetController::class, 'showResetForm'])->name('password.reset.form');
+// Route::post('/password/reset', [PasswordResetController::class, 'reset'])->name('password.reset');
+// Route::post('/password/email', [PasswordResetController::class, 'sendResetLink'])->name('password.email');
+
+
+// In routes/web.php
+Route::get('/password/reset/{token}', function ($token) {
+    return view('auth.passwords.reset', ['token' => $token]);
+});
+// Password Reset Routes
+Route::post('/password/email', [PasswordResetController::class, 'sendResetLinkEmail'])->name('password.email');
+Route::get('/password/reset/{token}', [PasswordResetController::class, 'showResetForm'])->name('password.reset');
+Route::post('/password/reset', [PasswordResetController::class, 'reset'])->name('password.update');
 // PayPal Payment Route
 Route::post('/paypal/process', [PaymentController::class, 'pay'])->name('paypal.process');
 

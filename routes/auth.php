@@ -22,10 +22,15 @@ use App\Http\Controllers\Api\InventoryLogController;
 use App\Http\Controllers\Api\PlaceController;
 use App\Http\Controllers\Api\NotificationController;
 
+use App\Http\Controllers\Api\Auth\PasswordResetController;
+
+Route::get('/auth/google/redirect', [GoogleAuthController::class, 'redirect']);
+Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback']);
+
 // routes/api.php
 Route::post('/password/request-token', [PasswordController::class, 'requestOtp']);
 Route::post('/password/verify-token', [PasswordController::class, 'verifyOtp']);
-Route::post('/password/reset', [PasswordController::class, 'resetPassword']);
+//Route::post('/password/reset', [PasswordController::class, 'resetPassword']);
 
 // routes/auth.php
 // Route::post('/password/email', [PasswordController::class, 'sendResetLink']);
@@ -180,6 +185,9 @@ Route::middleware(['auth'])->group(function () {
 });
 
 
+Route::post('/password/reset-link', [PasswordResetController::class, 'sendResetLink'])->name('api.password.reset.link');
+// Route::post('/password/reset', [PasswordResetController::class, 'reset'])->name('api.password.reset');
+// Route::post('/password/validate-token', [PasswordResetController::class, 'validateToken'])->name('api.password.validate.token');
 // Public Drug Routes
 Route::get('drugs', [DrugController::class, 'index']);
 Route::get('drugs/category/{category}', [DrugController::class, 'getByCategory']);
